@@ -289,35 +289,12 @@ class LocalSocketHttpConnection(HTTPConnection):
 class LocalSocketHandler(HTTPHandler):
     """HTTP handler for Unix domain sockets."""
     def __init__(self, debuglevel=0, socketpath=None):
-        HTTPHandler.__init__(self, debuglevel)
+        self._debuglevel = debuglevel
         self._socketpath = socketpath
 
     def http_open(self, req):
         return self.do_open(LocalSocketHttpConnection, req, socketpath=self._socketpath)
 
-    def do_open(self, http_class, req, **http_conn_args):
-        """Override to handle Unix socket connections."""
-        host = req.host
-        if not host:
-            raise ValueError('no host given')
-
-        http_conn = http_class(host, **http_conn_args)
-        http_conn.set_debuglevel(self._debuglevel)
-
-        try:
-            http_conn.connect()
-            http_conn.request(req.get_method(), req.selector, req.data, req.headers)
-            r = http_conn.getresponse()
-
-            # Create a proper response object that SUDS expects
-            r.msg = r.reason
-            return r
-        except Exception as err:
-            http_conn.close()
-            raise err
-        finally:
-            if hasattr(http_conn, 'close'):
-                http_conn.close()
 
 def choices():
     retlist = ["Start", "Stop", "Shutdown", "InstanceStart", "InstanceStop", "Bootstrap", "ParameterValue", "GetProcessList",
