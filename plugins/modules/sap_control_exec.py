@@ -286,7 +286,6 @@ class LocalSocketHttpConnection(HTTPConnection):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.socketpath)
 
-
 class LocalSocketHandler(HTTPHandler):
     """HTTP handler for Unix domain sockets."""
     def __init__(self, debuglevel=0, socketpath=None):
@@ -307,12 +306,19 @@ class LocalSocketHandler(HTTPHandler):
 
         try:
             http_conn.connect()
+            http_conn.request(req.get_method(), req.selector, req.data, req.headers)
             r = http_conn.getresponse()
+
+            # Create a proper response object that SUDS expects
+            r.msg = r.reason
+            return r
         except Exception as err:
             http_conn.close()
             raise err
+        finally:
+            if hasattr(http_conn, 'close'):
+                http_conn.close()
 
-        return r
 def choices():
     retlist = ["Start", "Stop", "Shutdown", "InstanceStart", "InstanceStop", "Bootstrap", "ParameterValue", "GetProcessList",
                "GetProcessList2", "GetStartProfile", "GetTraceFile", "GetAlertTree", "GetAlerts", "RestartService",
