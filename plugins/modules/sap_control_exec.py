@@ -248,9 +248,8 @@ try:
     from suds.client import Client
     from suds.sudsobject import asdict
     from suds.transport.http import HttpAuthenticated, HttpTransport
-except ImportError:
-    HAS_SUDS_LIBRARY = False
-    SUDS_LIBRARY_IMPORT_ERROR = traceback.format_exc()
+    HAS_SUDS_LIBRARY = True
+    SUDS_LIBRARY_IMPORT_ERROR = None
 
     class LocalSocketHttpAuthenticated(HttpAuthenticated):
         """Authenticated HTTP transport using Unix domain sockets."""
@@ -263,10 +262,11 @@ except ImportError:
             handlers.append(LocalSocketHandler(socketpath=self._socketpath))
             return handlers
 
-else:
-    SUDS_LIBRARY_IMPORT_ERROR = None
-    HAS_SUDS_LIBRARY = True
+except ImportError:
+    HAS_SUDS_LIBRARY = False
+    SUDS_LIBRARY_IMPORT_ERROR = traceback.format_exc()
 
+    # Define dummy class when suds is not available
     class LocalSocketHttpAuthenticated(object):
         def __init__(self, socketpath, **kwargs):
             pass
@@ -290,12 +290,29 @@ class LocalSocketHttpConnection(HTTPConnection):
 class LocalSocketHandler(HTTPHandler):
     """HTTP handler for Unix domain sockets."""
     def __init__(self, debuglevel=0, socketpath=None):
-        self._debuglevel = debuglevel
+        HTTPHandler.__init__(self, debuglevel)
         self._socketpath = socketpath
 
     def http_open(self, req):
         return self.do_open(LocalSocketHttpConnection, req, socketpath=self._socketpath)
 
+    def do_open(self, http_class, req, **http_conn_args):
+        """Override to handle Unix socket connections."""
+        host = req.host
+        if not host:
+            raise ValueError('no host given')
+
+        http_conn = http_class(host, **http_conn_args)
+        http_conn.set_debuglevel(self._debuglevel)
+
+        try:
+            http_conn.connect()
+            r = http_conn.getresponse()
+        except Exception as err:
+            http_conn.close()
+            raise err
+
+        return r
 def choices():
     retlist = ["Start", "Stop", "Shutdown", "InstanceStart", "InstanceStop", "Bootstrap", "ParameterValue", "GetProcessList",
                "GetProcessList2", "GetStartProfile", "GetTraceFile", "GetAlertTree", "GetAlerts", "RestartService",
