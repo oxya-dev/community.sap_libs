@@ -256,7 +256,7 @@ out:
 
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 
-from ..module_utils.sapstartsrv_client import (
+from ..module_utils.sapcontrol_soap import (
     HAS_SUDS_LIBRARY,
     SUDS_LIBRARY_IMPORT_ERROR,
     recursive_dict,
@@ -319,18 +319,30 @@ def main():
         try:
             if use_local:
                 # Try local connection first
-                result_conn = connection(hostname, None, username, password, function, parameters, use_local=True)
+                result_conn = connection(
+                    hostname, None, username, password, function, parameters,
+                    convert=False
+                )
             else:
                 # Try HTTP ports
                 try:
-                    result_conn = connection(hostname, "1129", username, password, function, parameters)
+                    result_conn = connection(
+                        hostname, "1129", username, password, function, parameters,
+                        convert=False
+                    )
                 except Exception:
-                    result_conn = connection(hostname, "1128", username, password, function, parameters)
+                    result_conn = connection(
+                        hostname, "1128", username, password, function, parameters,
+                        convert=False
+                    )
         except Exception as err:
             result['error'] = str(err)
     else:
         try:
-            result_conn = connection(hostname, port, username, password, function, parameters, use_local=False)
+            result_conn = connection(
+                hostname, port, username, password, function, parameters,
+                convert=False
+            )
         except Exception as err:
             result['error'] = str(err)
 
@@ -341,7 +353,10 @@ def main():
 
     if result_conn is not None:
         returned_data = recursive_dict(result_conn)
+    if result_conn is not None:
+        returned_data = recursive_dict(result_conn)
     else:
+        returned_data = result_conn
         returned_data = result_conn
 
     result['changed'] = True

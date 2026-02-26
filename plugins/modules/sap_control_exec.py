@@ -229,7 +229,7 @@ out:
 
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 
-from ..module_utils.sapstartsrv_client import (
+from ..module_utils.sapcontrol_soap import (
     HAS_SUDS_LIBRARY,
     SUDS_LIBRARY_IMPORT_ERROR,
     call_sap_control as connection,
@@ -303,6 +303,11 @@ def main():
     elif function == "StopSystem" or function == "RestartSystem":
         parameter = dict(waittimeout=0, softtimeout=0)
 
+    if function == "StartSystem":
+        parameter = dict(waittimeout=0)
+    elif function == "StopSystem" or function == "RestartSystem":
+        parameter = dict(waittimeout=0, softtimeout=0)
+
     # Determine if we should use local Unix socket connection
     # Use local if hostname is localhost and no username/password provided
     use_local = (hostname == "localhost" and
@@ -314,18 +319,30 @@ def main():
         try:
             if use_local:
                 # Try local connection first
-                result_conn = connection(hostname, None, username, password, function, parameter, sysnr=sysnr, use_local=True)
+                result_conn = connection(
+                    hostname, None, username, password, function, parameter,
+                    convert=False
+                )
             else:
                 # Try HTTP ports
                 try:
-                    result_conn = connection(hostname, "5{0}14".format((sysnr).zfill(2)), username, password, function, parameter, sysnr)
+                    result_conn = connection(
+                        hostname, "5{0}14".format((sysnr).zfill(2)), username, password, function, parameter,
+                        convert=False
+                    )
                 except Exception:
-                    result_conn = connection(hostname, "5{0}13".format((sysnr).zfill(2)), username, password, function, parameter, sysnr)
+                    result_conn = connection(
+                        hostname, "5{0}13".format((sysnr).zfill(2)), username, password, function, parameter,
+                        convert=False
+                    )
         except Exception as err:
             result['error'] = str(err)
     else:
         try:
-            result_conn = connection(hostname, port, username, password, function, parameter, sysnr, use_local=False)
+            result_conn = connection(
+                hostname, port, username, password, function, parameter,
+                convert=False
+            )
         except Exception as err:
             result['error'] = str(err)
 
@@ -336,7 +353,10 @@ def main():
 
     if result_conn is not None:
         returned_data = recursive_dict(result_conn)
+    if result_conn is not None:
+        returned_data = recursive_dict(result_conn)
     else:
+        returned_data = result_conn
         returned_data = result_conn
 
     result['changed'] = True

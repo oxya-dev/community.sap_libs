@@ -51,7 +51,7 @@ class TestSapcontrolModule(ModuleTestCase):
                 self.module.main()
         self.assertEqual(result.exception.args[0]['exception'], 'Module not found')
 
-    @patch('ansible_collections.community.sap_libs.plugins.module_utils.sapstartsrv_client.Client')
+    @patch('ansible_collections.community.sap_libs.plugins.module_utils.sapcontrol_soap.Client')
     def test_error_connection(self, mock_client):
         """tests fail module exception"""
 
@@ -61,6 +61,7 @@ class TestSapcontrolModule(ModuleTestCase):
             "function": "GetProcessList"
         }
         with self.assertRaises(AnsibleFailJson) as result:
+            mock_client.side_effect = Mock(side_effect=Exception('Test'))
             mock_client.side_effect = Mock(side_effect=Exception('Test'))
             with set_module_args(args):
                 self.module.main()
