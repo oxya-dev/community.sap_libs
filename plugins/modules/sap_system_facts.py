@@ -182,9 +182,6 @@ def get_hana_nr(sids, module):
                         'TYPE': 'HDB',
                         'InstanceType': 'HANA'
                     })
-                else:
-                    continue
->>>>>>> 2e99adf (add SID and permission check to facts module)
 
     return hana_list
 
@@ -223,11 +220,6 @@ def get_nw_nr(sids, module):
                             # split instance number
                             type = type_raw[:-2]
                             nw_list.append({'NR': instance_nr, 'SID': sid, 'TYPE': get_instance_type(type), 'InstanceType': 'NW'})
-<<<<<<< HEAD
-=======
-                    else:
-                        continue
->>>>>>> 2e99adf (add SID and permission check to facts module)
 
     return nw_list
 
