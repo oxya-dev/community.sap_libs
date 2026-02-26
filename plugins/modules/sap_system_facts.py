@@ -91,15 +91,25 @@ def get_all_hana_sid():
     sid_pattern = re.compile(r'^[A-Z][A-Z0-9][A-Z0-9]$')
 
     shared_path = "/hana/shared"
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 2e99adf (add SID and permission check to facts module)
     if is_accessible_dir(shared_path):
         try:
             for sid in os.listdir(shared_path):
                 if not sid_pattern.match(sid):
                     continue
+<<<<<<< HEAD
 
                 target_path = os.path.join("/usr/sap", sid)
 
+=======
+                
+                target_path = os.path.join("/usr/sap", sid)
+                
+>>>>>>> 2e99adf (add SID and permission check to facts module)
                 try:
                     if is_accessible_dir(target_path):
                         hana_sid.append(sid)
@@ -121,7 +131,11 @@ def get_all_nw_sid():
     sid_pattern = re.compile(r'^[A-Z][A-Z0-9][A-Z0-9]$')
 
     sapmnt_path = "/sapmnt"
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 2e99adf (add SID and permission check to facts module)
     if is_accessible_dir(sapmnt_path):
         try:
             for sid in os.listdir(sapmnt_path):
@@ -177,11 +191,21 @@ def get_hana_nr(sids, module):
                 # sapcontrol returns (0-5) exit codes; (1) usually means unavailable
                 if check_instance[0] != 1:
                     hana_list.append({
+<<<<<<< HEAD
                         'NR': instance_nr,
                         'SID': sid,
                         'TYPE': 'HDB',
                         'InstanceType': 'HANA'
                     })
+=======
+                        'NR': instance_nr, 
+                        'SID': sid, 
+                        'TYPE': 'HDB', 
+                        'InstanceType': 'HANA'
+                    })
+                else:
+                    continue
+>>>>>>> 2e99adf (add SID and permission check to facts module)
 
     return hana_list
 
@@ -220,6 +244,11 @@ def get_nw_nr(sids, module):
                             # split instance number
                             type = type_raw[:-2]
                             nw_list.append({'NR': instance_nr, 'SID': sid, 'TYPE': get_instance_type(type), 'InstanceType': 'NW'})
+<<<<<<< HEAD
+=======
+                    else:
+                        continue
+>>>>>>> 2e99adf (add SID and permission check to facts module)
 
     return nw_list
 
@@ -270,7 +299,11 @@ def run_module():
     # Fail if execution user does not have permission for sapcontrol
     sapcontrol_path = module.get_bin_path('/usr/sap/hostctrl/exe/sapcontrol', required=True)
     if not os.access(sapcontrol_path, os.X_OK):
+<<<<<<< HEAD
         module.fail_json(msg="Permission denied: Ansible user cannot execute {0}".format(sapcontrol_path))
+=======
+        module.fail_json(msg=f"Permission denied: Ansible user cannot execute {sapcontrol_path}")
+>>>>>>> 2e99adf (add SID and permission check to facts module)
 
     hana_sid = get_all_hana_sid()
     if hana_sid:
@@ -280,11 +313,16 @@ def run_module():
     if nw_sid:
         system_result = system_result + get_nw_nr(nw_sid, module)
 
+
     if system_result:
         result['ansible_facts'] = {'sap': system_result}
         result['msg'] = "SAP System facts were collected."
     else:
+<<<<<<< HEAD
         result['ansible_facts']
+=======
+        result['ansible_facts'] 
+>>>>>>> 2e99adf (add SID and permission check to facts module)
         result['msg'] = "No running SAP instances found or Ansible user cannot access them."
 
     if module.check_mode:
