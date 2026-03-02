@@ -69,7 +69,11 @@ class TestSapcontrolModule(ModuleTestCase):
 
     @patch('ansible_collections.community.sap_libs.plugins.module_utils.sapstartsrv_client.Client')
     def test_error_connection(self, mock_client):
+<<<<<<< HEAD
         """Fail when there is a connection error."""
+=======
+        """tests fail module exception"""
+>>>>>>> 5104651 (Rework module utils (#6))
 
         args = {
             "hostname": "192.168.8.15",

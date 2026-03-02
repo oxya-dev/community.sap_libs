@@ -250,8 +250,11 @@ from ..module_utils.sapstartsrv_client import (
     SUDS_LIBRARY_IMPORT_ERROR,
     call_sap_control as connection,
     recursive_dict,
+<<<<<<< HEAD
     is_read_only_function,
     requires_force,
+=======
+>>>>>>> 5104651 (Rework module utils (#6))
 )
 
 
@@ -320,6 +323,11 @@ def main():
     elif function == "StopSystem" or function == "RestartSystem":
         parameter = dict(waittimeout=0, softtimeout=0)
 
+    if function == "StartSystem":
+        parameter = dict(waittimeout=0)
+    elif function == "StopSystem" or function == "RestartSystem":
+        parameter = dict(waittimeout=0, softtimeout=0)
+
     # Determine if we should use local Unix socket connection
     # Use local socket connection if hostname is localhost and no username/password provided
     # True: Socket connection, False: SOAP connection
@@ -330,20 +338,31 @@ def main():
 
     if port is None:
         try:
+<<<<<<< HEAD
             if is_socket:
                 result['connection_type'] = 'socket'
                 result['connection_url'] = "http://localhost/sapcontrol?wsdl"
 
                 result_conn = connection(hostname, None, username, password, function, parameter, sysnr=sysnr, is_socket=True)
+=======
+            if use_local:
+                # Try local connection first
+                result_conn = connection(hostname, None, username, password, function, parameter, sysnr=sysnr, use_local=True)
+>>>>>>> 5104651 (Rework module utils (#6))
             else:
                 result['connection_type'] = 'soap'
 
                 # Try HTTPS and HTTP ports
                 try:
+<<<<<<< HEAD
                     result['connection_url'] = 'http://{0}:5{1}14/sapcontrol?wsdl'.format(hostname, str(sysnr).zfill(2))
                     result_conn = connection(hostname, "5{0}14".format((sysnr).zfill(2)), username, password, function, parameter, sysnr)
                 except Exception:
                     result['connection_url'] = 'http://{0}:5{1}13/sapcontrol?wsdl'.format(hostname, str(sysnr).zfill(2))
+=======
+                    result_conn = connection(hostname, "5{0}14".format((sysnr).zfill(2)), username, password, function, parameter, sysnr)
+                except Exception:
+>>>>>>> 5104651 (Rework module utils (#6))
                     result_conn = connection(hostname, "5{0}13".format((sysnr).zfill(2)), username, password, function, parameter, sysnr)
         except Exception as err:
             if "already started" in str(err).lower():
@@ -355,7 +374,11 @@ def main():
         result['connection_type'] = 'soap'
         result['connection_url'] = 'http://{0}:{1}/sapcontrol?wsdl'.format(hostname, port)
         try:
+<<<<<<< HEAD
             result_conn = connection(hostname, port, username, password, function, parameter, sysnr, is_socket=False)
+=======
+            result_conn = connection(hostname, port, username, password, function, parameter, sysnr, use_local=False)
+>>>>>>> 5104651 (Rework module utils (#6))
         except Exception as err:
             if "already started" in str(err).lower():
                 already_started_msg = "Function {0} returned that Instance is already started.".format(function)
@@ -367,7 +390,14 @@ def main():
         result['msg'] = 'Function execution has failed. See error for more details.'
         module.fail_json(**result)
 
+<<<<<<< HEAD
     conn_result = result_conn
+=======
+    if result_conn is not None:
+        returned_data = recursive_dict(result_conn)
+    else:
+        returned_data = result_conn
+>>>>>>> 5104651 (Rework module utils (#6))
 
     # Ensure that we run recursive_dict only on dict and leave it for idempotent functions.
     if isinstance(conn_result, dict) and conn_result.get('status') == 'already_started':
