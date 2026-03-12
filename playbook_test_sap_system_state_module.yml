@@ -8,7 +8,7 @@
     - name: "Start or Stop SAP system"
       community.sap_libs.sap_system_state:
         sysnr: "00"
-        state: stopped
+        state: started
         wait_timeout: 600
       become: true
       register: result_start
