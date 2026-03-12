@@ -146,7 +146,8 @@ from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ..module_utils.sapstartsrv_client import (
     HAS_SUDS_LIBRARY,
     SUDS_LIBRARY_IMPORT_ERROR,
-    call_sap_control,
+    call_function,
+    connection,
     recursive_dict,
 )
 
@@ -165,13 +166,9 @@ ALREADY_FAULTS = (
 )
 
 
-def get_instance_list(hostname, sysnr, port, username, password, use_local):
+def get_instance_list(client):
     """Call GetSystemInstanceList and return all instances of the SAP system."""
-    result = call_sap_control(
-        hostname, port, username, password,
-        "GetSystemInstanceList", None,
-        sysnr=sysnr, use_local=use_local
-    )
+    result = call_function(client, "GetSystemInstanceList")
     if result is None:
         return []
     data = recursive_dict(result)
@@ -198,8 +195,7 @@ def compute_overall_state(instances):
     return DISPSTATUS_YELLOW
 
 
-def wait_for_state(target_fn, hostname, sysnr, port, username, password,
-                   use_local, timeout, poll_interval, desired_state=None):
+def wait_for_state(target_fn, client, timeout, poll_interval, desired_state=None):
     """
     Poll GetSystemInstanceList until target_fn(state) is True or timeout is reached.
     Returns (final_state, instances, regression) or (None, [], None) on timeout.
@@ -221,7 +217,7 @@ def wait_for_state(target_fn, hostname, sysnr, port, username, password,
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            instances = get_instance_list(hostname, sysnr, port, username, password, use_local)
+            instances = get_instance_list(client)
             state = compute_overall_state(instances)
 
             # Regression detection 
@@ -303,9 +299,11 @@ def main():
     if port is None and not use_local:
         port = "5{0}13".format(str(sysnr).zfill(2))
 
-    # Read current instance state
+   
     try:
-        instances = get_instance_list(hostname, sysnr, port, username, password, use_local)
+        client = connection("sapcontrol", hostname, port, username, password,
+                            sysnr=sysnr, use_local=use_local)
+        instances = get_instance_list(client)
     except Exception as e:
         module.fail_json(msg="Failed to get instance list: {0}".format(str(e)))
 
@@ -353,17 +351,9 @@ def main():
     action_skipped = False
     try:
         if desired_state == 'started':
-            call_sap_control(
-                hostname, port, username, password,
-                "StartSystem", dict(waittimeout=wait_timeout, options=0),
-                sysnr=sysnr, use_local=use_local
-            )
+            call_function(client, "StartSystem", dict(waittimeout=wait_timeout, options=0))
         else:  # stopped
-            call_sap_control(
-                hostname, port, username, password,
-                "StopSystem", dict(waittimeout=wait_timeout, softtimeout=0),
-                sysnr=sysnr, use_local=use_local
-            )
+            call_function(client, "StopSystem", dict(waittimeout=wait_timeout, softtimeout=0))
     except Exception as e:
         err_lower = str(e).lower()
         if any(fault in err_lower for fault in ALREADY_FAULTS):
@@ -382,8 +372,7 @@ def main():
         else:
             target_fn = lambda s: s == DISPSTATUS_GRAY
         quick_state, quick_instances, regression = wait_for_state(
-            target_fn, hostname, sysnr, port, username, password,
-            use_local, timeout=30, poll_interval=2, desired_state=desired_state
+            target_fn, client, timeout=30, poll_interval=2, desired_state=desired_state
         )
         if regression is not None:
             result['state'] = quick_state
@@ -404,7 +393,7 @@ def main():
         else:
             # Could not confirm within 30 s: return best-effort current state
             try:
-                fresh_instances = get_instance_list(hostname, sysnr, port, username, password, use_local)
+                fresh_instances = get_instance_list(client)
                 result['state'] = compute_overall_state(fresh_instances)
                 result['instances'] = fresh_instances
             except Exception:
@@ -417,8 +406,7 @@ def main():
         else:
             target_fn = lambda s: s == DISPSTATUS_GRAY
         final_state, final_instances, regression = wait_for_state(
-            target_fn, hostname, sysnr, port, username, password,
-            use_local, wait_timeout, poll_interval, desired_state=desired_state
+            target_fn, client, wait_timeout, poll_interval, desired_state=desired_state
         )
 
         if regression is not None:
