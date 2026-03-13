@@ -36,11 +36,6 @@ options:
       - SAP instance number (e.g. "01").
     required: true
     type: str
-  wait:
-    description:
-      - Whether to wait for the instance to reach the target state.
-    type: bool
-    default: true
   wait_timeout:
     description:
       - Timeout in seconds to wait for the target state.
@@ -51,6 +46,12 @@ options:
       - Interval in seconds between status checks.
     type: int
     default: 5
+  post_startup_delay:
+    description:
+      - Seconds to monitor stability after all instances reach GREEN.
+      - If any instance regresses during this window, the module fails.
+    type: int
+    default: 15
   hostname:
     description:
       - Hostname of the sapstartsrv.
@@ -159,11 +160,17 @@ DISPSTATUS_GRAY = "SAPControl-GRAY"
 
 # SAP fault messages meaning the instance is already in the desired state
 ALREADY_FAULTS = (
-    "instance already started",
-    "instance already stopped",
     "already started",
     "already stopped",
 )
+
+#
+STATE_RANK = {
+    DISPSTATUS_GRAY: 0,
+    DISPSTATUS_YELLOW: 1,
+    DISPSTATUS_GREEN: 2,
+    DISPSTATUS_RED: 3,
+}
 
 
 def get_instance_list(client):
@@ -195,64 +202,99 @@ def compute_overall_state(instances):
     return DISPSTATUS_YELLOW
 
 
-def wait_for_state(target_fn, client, timeout, poll_interval, desired_state=None):
+def wait_for_green(client, timeout, poll_interval, post_startup_delay):
     """
-    Poll GetSystemInstanceList until target_fn(state) is True or timeout is reached.
-    Returns (final_state, instances, regression) or (None, [], None) on timeout.
+    Wait for all instances to reach GREEN, then monitor stability.
     """
-    # Track the highest state reached per instance (GREEN > YELLOW > GRAY)
-    
-    STATE_RANK = {
-        DISPSTATUS_GRAY: 0,
-        DISPSTATUS_YELLOW: 1,
-        DISPSTATUS_GREEN: 2,
-        DISPSTATUS_RED: 3,
-    }
-    best_state = {}  # (hostname, instanceNr) -> highest dispstatus reached
-    # Count consecutive polls where the overall state satisfies target_fn
-    stable_count = 0
-    # Number of consecutive confirmations required after reaching the target state
-    stability_checks = 1
+    previous_statuses = {}  # (hostname, instanceNr) -> most recent dispstatus seen
 
+    # wait until all instances are GREEN
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             instances = get_instance_list(client)
             state = compute_overall_state(instances)
 
-            # Regression detection 
-            if desired_state == 'started':
-                for inst in instances:
-                    key = (inst.get('hostname'), inst.get('instanceNr'))
-                    inst_status = inst.get('dispstatus', DISPSTATUS_GRAY)
-                    prev_best = best_state.get(key, DISPSTATUS_GRAY)
-                    # Update the best state seen for this instance
-                    if STATE_RANK.get(inst_status, 0) > STATE_RANK.get(prev_best, 0):
-                        best_state[key] = inst_status
-                    elif STATE_RANK.get(inst_status, 0) < STATE_RANK.get(prev_best, 0):
-                        return state, instances, {
-                            'instance': inst,
-                            'from_state': prev_best,
-                            'to_state': inst_status,
-                        }
+            # Regression detection
+            for inst in instances:
+                instance_key = (inst.get('hostname'), inst.get('instanceNr'))
+                current_status = inst.get('dispstatus', DISPSTATUS_GRAY)
+                previous_status = previous_statuses.get(instance_key, DISPSTATUS_GRAY)
+                if STATE_RANK.get(current_status, 0) > STATE_RANK.get(previous_status, 0):
+                    previous_statuses[instance_key] = current_status
+                elif STATE_RANK.get(current_status, 0) < STATE_RANK.get(previous_status, 0):
+                    return state, instances, {
+                        'instance': inst,
+                        'from_state': previous_status,
+                        'to_state': current_status,
+                    }
 
-            # Stop polling immediately on RED, nothing to wait for
             if state == DISPSTATUS_RED:
                 return state, instances, None
 
-            if target_fn(state):
-                stable_count += 1
-                # Return only after stability_checks consecutive confirmations
-                if stable_count > stability_checks:
-                    return state, instances, None
-            else:
-                # State regressed globally, reset the stability counter
-                stable_count = 0
+            if state == DISPSTATUS_GREEN:
+                break   # All instances GREEN — enter stability window
 
         except Exception:
             pass
         time.sleep(poll_interval)
-    return None, [], None
+    else:
+        # Timeout reached without all instances turning GREEN
+        return None, [], None
+
+    # stability window — confirm GREEN holds for post_startup_delay seconds
+    stability_deadline = time.time() + post_startup_delay
+    while time.time() < stability_deadline:
+        try:
+            instances = get_instance_list(client)
+            state = compute_overall_state(instances)
+
+            for inst in instances:
+                instance_key = (inst.get('hostname'), inst.get('instanceNr'))
+                current_status = inst.get('dispstatus', DISPSTATUS_GRAY)
+                previous_status = previous_statuses.get(instance_key, DISPSTATUS_GRAY)
+                if STATE_RANK.get(current_status, 0) > STATE_RANK.get(previous_status, 0):
+                    previous_statuses[instance_key] = current_status
+                elif STATE_RANK.get(current_status, 0) < STATE_RANK.get(previous_status, 0):
+                    return state, instances, {
+                        'instance': inst,
+                        'from_state': previous_status,
+                        'to_state': current_status,
+                    }
+
+            if state == DISPSTATUS_RED:
+                return state, instances, None
+
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+
+    # Final read after stability window
+    try:
+        instances = get_instance_list(client)
+        state = compute_overall_state(instances)
+        return state, instances, None
+    except Exception:
+        return DISPSTATUS_GREEN, [], None
+
+
+def wait_for_gray(client, timeout, poll_interval):
+    """
+    Wait until all instances reach GRAY.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            instances = get_instance_list(client)
+            state = compute_overall_state(instances)
+
+            if state in (DISPSTATUS_GRAY, DISPSTATUS_RED):
+                return state, instances
+
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+    return None, []
 
 
 def main():
@@ -267,6 +309,7 @@ def main():
             wait=dict(type='bool', default=True),
             wait_timeout=dict(type='int', default=600),
             poll_interval=dict(type='int', default=5),
+            post_startup_delay=dict(type='int', default=15),
         ),
         supports_check_mode=True,
     )
@@ -286,6 +329,7 @@ def main():
     wait = params['wait']
     wait_timeout = params['wait_timeout']
     poll_interval = params['poll_interval']
+    post_startup_delay = params['post_startup_delay']
 
     # Use local Unix socket when: hostname=localhost, no credentials, no explicit port
     use_local = (
@@ -364,64 +408,28 @@ def main():
 
     result['changed'] = not action_skipped
 
-    # Quick confirmation poll: wait briefly for the target state, then return.
-    # Unlike wait=True, we do not fail on timeout — we just return the last known state.
-    if not wait:
-        if desired_state == 'started':
-            target_fn = lambda s: s == DISPSTATUS_GREEN
-        else:
-            target_fn = lambda s: s == DISPSTATUS_GRAY
-        quick_state, quick_instances, regression = wait_for_state(
-            target_fn, client, timeout=30, poll_interval=2, desired_state=desired_state
-        )
-        if regression is not None:
-            result['state'] = quick_state
-            result['instances'] = quick_instances
-            result['msg'] = (
-                "Regression detected on {0} instance {1}: {2} -> {3}."
-                .format(
-                    regression['instance'].get('hostname'),
-                    regression['instance'].get('instanceNr'),
-                    regression['from_state'],
-                    regression['to_state'],
-                )
-            )
-            module.fail_json(**result)
-        if quick_state is not None:
-            result['state'] = quick_state
-            result['instances'] = quick_instances
-        else:
-            # Could not confirm within 30 s: return best-effort current state
-            try:
-                fresh_instances = get_instance_list(client)
-                result['state'] = compute_overall_state(fresh_instances)
-                result['instances'] = fresh_instances
-            except Exception:
-                pass
-
-    # Wait for the target state if requested
     if wait:
         if desired_state == 'started':
-            target_fn = lambda s: s == DISPSTATUS_GREEN
-        else:
-            target_fn = lambda s: s == DISPSTATUS_GRAY
-        final_state, final_instances, regression = wait_for_state(
-            target_fn, client, wait_timeout, poll_interval, desired_state=desired_state
-        )
-
-        if regression is not None:
-            result['state'] = final_state
-            result['instances'] = final_instances
-            result['msg'] = (
-                "Regression detected on {0} instance {1}: {2} -> {3}."
-                .format(
-                    regression['instance'].get('hostname'),
-                    regression['instance'].get('instanceNr'),
-                    regression['from_state'],
-                    regression['to_state'],
-                )
+            final_state, final_instances, regression = wait_for_green(
+                client, wait_timeout, poll_interval, post_startup_delay
             )
-            module.fail_json(**result)
+            if regression is not None:
+                result['state'] = final_state
+                result['instances'] = final_instances
+                result['msg'] = (
+                    "Regression detected on {0} instance {1}: {2} -> {3}."
+                    .format(
+                        regression['instance'].get('hostname'),
+                        regression['instance'].get('instanceNr'),
+                        regression['from_state'],
+                        regression['to_state'],
+                    )
+                )
+                module.fail_json(**result)
+        else:
+            final_state, final_instances = wait_for_gray(
+                client, wait_timeout, poll_interval
+            )
 
         if final_state is None:
             result['msg'] = (
