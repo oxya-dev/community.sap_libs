@@ -8,9 +8,9 @@
     - name: "Start or Stop SAP system"
       community.sap_libs.sap_system_state:
         sysnr: "10"
-        state: started
-        wait_timeout: 300 
-        post_startup_delay: 15
+        state: stopped
+        wait_timeout: 600
+        post_startup_delay: 10
       become: true
       register: result_start
 

@@ -236,7 +236,7 @@ def wait_for_green(client, timeout, poll_interval, post_startup_delay):
                 break   # All instances GREEN — enter stability window
 
         except Exception:
-            pass
+            raise
         time.sleep(poll_interval)
     else:
         # Timeout reached without all instances turning GREEN
@@ -245,37 +245,17 @@ def wait_for_green(client, timeout, poll_interval, post_startup_delay):
     # stability window — confirm GREEN holds for post_startup_delay seconds
     stability_deadline = time.time() + post_startup_delay
     while time.time() < stability_deadline:
-        try:
-            instances = get_instance_list(client)
-            state = compute_overall_state(instances)
-
-            for inst in instances:
-                instance_key = (inst.get('hostname'), inst.get('instanceNr'))
-                current_status = inst.get('dispstatus', DISPSTATUS_GRAY)
-                previous_status = previous_statuses.get(instance_key, DISPSTATUS_GRAY)
-                if STATE_RANK.get(current_status, 0) > STATE_RANK.get(previous_status, 0):
-                    previous_statuses[instance_key] = current_status
-                elif STATE_RANK.get(current_status, 0) < STATE_RANK.get(previous_status, 0):
-                    return state, instances, {
-                        'instance': inst,
-                        'from_state': previous_status,
-                        'to_state': current_status,
-                    }
-
-            if state == DISPSTATUS_RED:
-                return state, instances, None
-
-        except Exception:
-            pass
-        time.sleep(poll_interval)
-
-    # Final read after stability window
-    try:
         instances = get_instance_list(client)
         state = compute_overall_state(instances)
-        return state, instances, None
-    except Exception:
-        return DISPSTATUS_GREEN, [], None
+
+        if state != DISPSTATUS_GREEN:
+            return state, instances, None
+
+        time.sleep(poll_interval)
+
+    instances = get_instance_list(client)
+    state = compute_overall_state(instances)
+    return state, instances, None
 
 
 def wait_for_gray(client, timeout, poll_interval):
@@ -288,11 +268,11 @@ def wait_for_gray(client, timeout, poll_interval):
             instances = get_instance_list(client)
             state = compute_overall_state(instances)
 
-            if state in (DISPSTATUS_GRAY, DISPSTATUS_RED):
+            if state == DISPSTATUS_GRAY:
                 return state, instances
 
         except Exception:
-            pass
+            raise
         time.sleep(poll_interval)
     return None, []
 
