@@ -23,6 +23,7 @@ version_added: "1.0.0"
 description:
   - Start or stop all instances of a SAP system idempotently using the sapcontrol SOAP API.
   - Connects to the sapstartsrv identified by C(sysnr) and issues C(StartSystem) or C(StopSystem).
+  - Compatible with any SAP system managed by SAPControl, including SAP NetWeaver and SAP HANA.
   - Uses local Unix socket or HTTP depending on the provided parameters.
 options:
   state:
@@ -36,11 +37,16 @@ options:
       - SAP instance number (e.g. "01").
     required: true
     type: str
+  wait:
+    description:
+      - Whether to wait for the instance to reach the target state.
+    type: bool
+    default: true
   wait_timeout:
     description:
       - Timeout in seconds to wait for the target state.
     type: int
-    default: 300
+    default: 600
   poll_interval:
     description:
       - Interval in seconds between status checks.
@@ -164,7 +170,7 @@ ALREADY_FAULTS = (
     "already stopped",
 )
 
-#
+
 STATE_RANK = {
     DISPSTATUS_GRAY: 0,
     DISPSTATUS_YELLOW: 1,
@@ -348,14 +354,6 @@ def main():
     if desired_state == 'stopped' and current_state == DISPSTATUS_GRAY:
         result['msg'] = "SAP instance {0} is already GRAY (stopped).".format(sysnr)
         module.exit_json(**result)
-
-    # RED state blocks any automatic start/stop action
-    if current_state == DISPSTATUS_RED:
-        result['msg'] = (
-            "SAP instance {0} is in RED state. "
-            "Manual intervention required.".format(sysnr)
-        )
-        module.fail_json(**result)
 
     # Check mode
     if module.check_mode:

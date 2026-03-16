@@ -1,13 +1,13 @@
 ---
 - name: Test sap_system_state module
-  hosts: geuw1-lsap1
+  hosts: geuw1-lsapdb
   gather_facts: false
 
   tasks:
 
     - name: "Start or Stop SAP system"
       community.sap_libs.sap_system_state:
-        sysnr: "10"
+        sysnr: "00"
         state: stopped
         wait_timeout: 600
         post_startup_delay: 10
