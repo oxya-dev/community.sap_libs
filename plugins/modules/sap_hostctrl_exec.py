@@ -319,7 +319,7 @@ def main():
         try:
             if use_local:
                 # Try local connection first
-                result_conn = connection(hostname, None, username, password, function, parameters, use_local=True)
+                result_conn = connection(hostname, "1128", username, password, function, parameters, use_local=True)
             else:
                 # Try HTTP ports
                 try:

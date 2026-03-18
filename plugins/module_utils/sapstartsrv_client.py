@@ -121,7 +121,7 @@ def connection(service_name, hostname, port, username, password, sysnr=None, use
             unix_socket = "/tmp/.sapstream5{0}13".format(str(sysnr).zfill(2))
         else:
             # For saphostctrl, the socket name is fixed
-            unix_socket = "/tmp/.sapstream1128"
+            unix_socket = "/tmp/.sapstream{0}".format(str(port))
 
         # Check if socket exists
         if not os.path.exists(unix_socket):
