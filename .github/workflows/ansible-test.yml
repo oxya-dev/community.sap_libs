@@ -28,9 +28,9 @@ jobs:
     strategy:
       fail-fast: false  # Disabled so we can see all failed combinations.
 
-      # Serialization: Only allow 2 jobs to run simultaneously.
+      # Serialization: Limit number of parallel jobs.
       # This helps with throughput issues on GitHub Gateway servers.
-      max-parallel: 2
+      max-parallel: 5
 
       # Define a build matrix to test compatibility across multiple Ansible versions.
       # Each version listed below will spawn a separate job that runs in parallel.
@@ -51,14 +51,15 @@ jobs:
           testing-type: sanity
 
   units-supported:
+    needs: sanity-supported  # Forces unit tests to wait until sanity tests are completed.
     runs-on: ubuntu-latest
     name: Units (Supported Ⓐ${{ matrix.ansible }}+py${{ matrix.python }})
     strategy:
       fail-fast: false  # Disabled so we can see all failed combinations.
 
-      # Serialization: Only allow 2 jobs to run simultaneously.
+      # Serialization: Limit number of parallel jobs.
       # This helps with throughput issues on GitHub Gateway servers.
-      max-parallel: 2
+      max-parallel: 5
 
       # Define a build matrix to test compatibility across multiple Ansible versions.
       # Each version listed below will spawn a separate job that runs in parallel.
