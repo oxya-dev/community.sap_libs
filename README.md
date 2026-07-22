@@ -1,6 +1,6 @@
 # community.sap_libs Ansible Collection
 
-[![CI](https://github.com/sap-linuxlab/community.sap_libs/workflows/CI/badge.svg)](https://github.com/sap-linuxlab/community.sap_libs/actions)[![Codecov](https://img.shields.io/codecov/c/github/sap-linuxlab/community.sap_libs)](https://codecov.io/gh/sap-linuxlab/community.sap_libs)
+[![CI](https://github.com/sap-linuxlab/community.sap_libs/workflows/CI/badge.svg)](https://github.com/sap-linuxlab/community.sap_libs/actions) [![Codecov](https://img.shields.io/codecov/c/github/sap-linuxlab/community.sap_libs)](https://codecov.io/gh/sap-linuxlab/community.sap_libs)
 
 ## Description
 This Ansible Collection provides a set of Ansible Modules designed to automate various low-level activities on SAP systems.<br>
