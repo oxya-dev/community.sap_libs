@@ -13,11 +13,29 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      # Do not trigger workflow for files that do not affect functionality or tests.
+      # This helps reduce unnecessary CI runs and saves resources.
+      - '**.md'             # All markdown files anywhere in the repository.
+      - '**.rst'            # All changelog files anywhere in the repository.
+      - 'docs/**'           # All files inside the docs folder on root level.
+      - 'roles/**/docs/**'  # All files inside the docs folder inside the roles.
+      - 'changelogs/**'     # All files inside the changelogs folder on root level.
+      - 'galaxy.yml'        # Collection metadata file.
 
   pull_request:
     branches:
       - main
       - dev
+    paths-ignore:
+      # Do not trigger workflow for files that do not affect functionality or tests.
+      # This helps reduce unnecessary CI runs and saves resources.
+      - '**.md'             # All markdown files anywhere in the repository.
+      - '**.rst'            # All changelog files anywhere in the repository.
+      - 'docs/**'           # All files inside the docs folder on root level.
+      - 'roles/**/docs/**'  # All files inside the docs folder inside the roles.
+      - 'changelogs/**'     # All files inside the changelogs folder on root level.
+      - 'galaxy.yml'        # Collection metadata file.
 
   workflow_dispatch:
 
