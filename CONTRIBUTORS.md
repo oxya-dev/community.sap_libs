@@ -19,8 +19,8 @@ For specific role maintainers, see the `README.md` file in the corresponding rol
 
 | Name | Commits | Lines Changed | Last Commit |
 | ---- | ------- | ------------- | ----------- |
+| [Marcel Mamula](https://github.com/marcelmamula) | 27 | 3406 | 2026-08-05 |
 | [Rainer Leber](https://github.com/rainerleber) | 23 | 11921 | 2025-09-22 |
-| [Marcel Mamula](https://github.com/marcelmamula) | 19 | 2799 | 2026-03-13 |
 | ydouvry | 9 | 966 | 2026-02-27 |
 | Nicolas Bettembourg | 7 | 265 | 2025-10-27 |
 | mmalagowski | 2 | 12 | 2026-02-27 |
@@ -105,7 +105,7 @@ For specific role maintainers, see the `README.md` file in the corresponding rol
 
 | Name | Commits | Lines Changed | Last Commit |
 | ---- | ------- | ------------- | ----------- |
-| [Marcel Mamula](https://github.com/marcelmamula) | 4 | 103 | 2026-03-13 |
+| [Marcel Mamula](https://github.com/marcelmamula) | 5 | 144 | 2026-06-19 |
 | [Rainer Leber](https://github.com/rainerleber) | 2 | 230 | 2022-09-09 |
 
 ## Contributions by Module Utilities
