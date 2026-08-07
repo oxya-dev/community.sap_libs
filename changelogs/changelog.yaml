@@ -156,3 +156,9 @@ releases:
         - sap_hdbsql - Add new parameter named properties (https://github.com/sap-linuxlab/community.sap_libs/pull/79)
       release_summary: This release includes various improvements and refactorings across the collection.
     release_date: '2026-03-13'
+  1.7.1:
+    changes:
+      bugfixes:
+      - sapcar_extract - Update SAPCAR command from PATH and add explanation with HANA limitations (https://github.com/sap-linuxlab/community.sap_libs/pull/86)
+      release_summary: Minimum Ansible version increased to 2.18 and fix for sapcar_extract module.
+    release_date: '2026-08-07'
