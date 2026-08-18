@@ -1,8 +1,8 @@
 # Notice: This collection is looking for new maintainers!
-> We are actively seeking contributors to help maintain and improve the `community.sap_libs` Ansible Collection.  
+> We are actively seeking contributors to help maintain and improve the `community.sap_libs` Ansible Collection.<br>
 > If you are interested in getting involved, please read our [contribution guidelines](https://github.com/sap-linuxlab/community.sap_libs/blob/main/README.md#contributing) to get started.
 
-# Interim maintainers
+# Maintainers
 - [Marcel Mamula](https://github.com/marcelmamula)
 
 # Authors and inactive maintainers

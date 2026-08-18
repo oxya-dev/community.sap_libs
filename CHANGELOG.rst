@@ -4,6 +4,20 @@ Community SAP Release Notes
 
 .. contents:: Topics
 
+v1.7.1
+======
+
+Release Summary
+---------------
+
+Minimum Ansible version increased to 2.18 and fix for sapcar_extract module.
+
+Bugfixes
+--------
+
+- sapcar_extract - Update SAPCAR command from PATH and add explanation with HANA limitations (https://github.com/sap-linuxlab/community.sap_libs/pull/86)
+
+
 v1.7.0
 ======
 

@@ -36,12 +36,13 @@ options:
   dest:
     description:
       - The destination where SAPCAR extracts the SAR file. Missing folders will be created.
-        If this parameter is not provided, it will unpack in the same folder as the SAR file.
+      - If this parameter is not provided, it will unpack in the same folder as the SAR file.
     type: path
   binary_path:
     description:
       - The path to the SAPCAR binary, for example, C(/home/dummy/sapcar) or C(https://myserver/SAPCAR).
-        If this parameter is not provided, the module will look in C(PATH).
+      - If this parameter is not provided, the module will look in C(PATH).
+      - Note that when executing the module as a SAP HANA user, functionality might be limited due to the outdated Python version bundled with SAP HANA.
     type: path
   signature:
     description:
@@ -76,34 +77,40 @@ notes:
 '''
 
 EXAMPLES = r"""
-- name: Extract SAR file
+- name: Extract SAR file in same directory using SAPCAR executable from user's PATH
   community.sap_libs.sapcar_extract:
-    path: "~/source/hana.sar"
+    path: "/software/SAPEXEDB_50-70008101.SAR"
 
-- name: Extract SAR file with destination
+- name: Extract SAR file in different directory using SAPCAR executable from user's PATH
   community.sap_libs.sapcar_extract:
-    path: "~/source/hana.sar"
-    dest: "~/test/"
+    path: "/software/SAPEXEDB_50-70008101.SAR"
+    dest: "/software/sapexedb_extracted/"
 
-- name: Extract SAR file with destination and download from webserver can be a fileshare as well
+- name: Extract SAR file in different directory using SAPCAR from local path
   community.sap_libs.sapcar_extract:
-    path: "~/source/hana.sar"
-    dest: "~/dest/"
+    path: "/software/SAPEXEDB_50-70008101.SAR"
+    dest: "/software/sapexedb_extracted/"
+    binary_path: "/software/SAPCAR_1300-70007716.EXE"
+
+- name: Extract SAR file in different directory using SAPCAR from web server
+  community.sap_libs.sapcar_extract:
+    path: "/software/SAPEXEDB_50-70008101.SAR"
+    dest: "/software/sapexedb_extracted/"
     binary_path: "https://myserver/SAPCAR"
 
-- name: Extract SAR file and delete SAR after extract
+- name: Extract SAR file and delete SAR after extraction
   community.sap_libs.sapcar_extract:
-    path: "~/source/hana.sar"
+    path: "/software/SAPEXEDB_50-70008101.SAR"
     remove: true
 
 - name: Extract SAR file with manifest
   community.sap_libs.sapcar_extract:
-    path: "~/source/hana.sar"
+    path: "/software/SAPEXEDB_50-70008101.SAR"
     signature: true
 
 - name: Extract SAR file with manifest and rename it
   community.sap_libs.sapcar_extract:
-    path: "~/source/hana.sar"
+    path: "/software/SAPEXEDB_50-70008101.SAR"
     manifest: "MyNewSignature.SMF"
     signature: true
 """
@@ -118,7 +125,7 @@ stdout:
     description: Standard output from the SAPCAR command.
     type: str
     returned: always
-    sample: "SAPCAR: processing archive /tmp/hana.sar (version 2.01)\\nfile1\\nfile2"
+    sample: "SAPCAR: processing archive /software/SAPEXEDB_50-70008101.SAR (version 2.01)\\nfile1\\nfile2"
 stderr:
     description: Standard error from the SAPCAR command.
     type: str
@@ -128,7 +135,7 @@ command:
     description: The full SAPCAR command that was executed.
     type: str
     returned: always
-    sample: "/tmp/sapcar -xvf /tmp/hana.sar -R /tmp/test2"
+    sample: "/tmp/sapcar -xvf /software/SAPEXEDB_50-70008101.SAR -R /software/sapexedb_extracted/"
 changed:
     description: Whether the module made changes.
     type: bool
@@ -246,7 +253,7 @@ def main():
         command = [module.get_bin_path(bin_path, required=True)]
     else:
         try:
-            command = [module.get_bin_path('sapcar', required=True)]
+            command = [module.get_bin_path('SAPCAR', required=True)]
         except Exception as e:
             module.fail_json(msg='Failed to find SAPCAR at the expected path or URL "{0}". Please check whether it is available: {1}'
                              .format(bin_path, to_native(e)))
