@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-<<<<<<< HEAD
 
 # Copyright (c) 2022-2026 The Project Contributors.
 #
@@ -9,28 +8,14 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-=======
-# -*- coding: utf-8 -*-
-
-# Copyright: (c) 2026, Sean Freeman ,
-# Rainer Leber <rainerleber@gmail.com> <rainer.leber@sva.de>
-# Melvin Malagowski <mmalagowski@oxya.com>
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
->>>>>>> 5104651 (Rework module utils (#6))
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-<<<<<<< HEAD
 #
 # For a detailed list of copyright holders and contribution history,
 # please refer to the CONTRIBUTORS.md file in the project root.
-=======
->>>>>>> 5104651 (Rework module utils (#6))
 
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
@@ -81,7 +66,6 @@ except ImportError:
         def u2handlers(self):
             return []
 
-<<<<<<< HEAD
 # Constant that defines accepted function prefixes, that are not doing changes.
 READ_ONLY_FUNCTION_PREFIXES = (
     "get",
@@ -97,8 +81,6 @@ READ_ONLY_FUNCTION_PREFIXES = (
 FORCE_REQUIRED_PREFIXES = ("stop", "restart")
 FORCE_REQUIRED_EXACT = ("shutdown", "instancestop")
 
-=======
->>>>>>> 5104651 (Rework module utils (#6))
 
 class LocalSocketHttpConnection(HTTPConnection):
     """HTTP connection class that uses Unix domain sockets."""
@@ -123,7 +105,6 @@ class LocalSocketHandler(HTTPHandler):
         return self.do_open(LocalSocketHttpConnection, req, socketpath=self._socketpath)
 
 
-<<<<<<< HEAD
 def is_read_only_function(function_name):
     """Return True for read-only functions (e.g. Get*, List*)."""
     if not function_name:
@@ -140,8 +121,6 @@ def requires_force(function_name):
     return fname in FORCE_REQUIRED_EXACT or fname.startswith(FORCE_REQUIRED_PREFIXES)
 
 
-=======
->>>>>>> 5104651 (Rework module utils (#6))
 def recursive_dict(suds_object):
     """Convert a suds object to a plain Python dict, recursively.
 
@@ -165,7 +144,6 @@ def recursive_dict(suds_object):
     return out
 
 
-<<<<<<< HEAD
 def connection(service_name, hostname, port, username, password, sysnr=None, is_socket=False):
     """
     Return a SOAP client for the given service (sapcontrol or saphostctrl).
@@ -213,48 +191,6 @@ def call_sap_hostctrl(hostname, port, username, password, function, parameters, 
     client = connection(
         "SAPHostControl/", hostname, port, username, password, sysnr=None, is_socket=is_socket)
     return call_function(client, function, parameters)
-=======
-def connection(service_name, hostname, port, username, password, sysnr=None, use_local=False):
-    """
-    Return a SOAP client for the given service (sapcontrol or saphostctrl).
-    """
-    if use_local:
-        # Use Unix domain socket for local connection
-        if sysnr is not None:
-            # For sapcontrol, the socket name includes the system number
-            unix_socket = "/tmp/.sapstream5{0}13".format(str(sysnr).zfill(2))
-        else:
-            # For saphostctrl, the socket name is fixed
-            unix_socket = "/tmp/.sapstream1128"
-
-        # Check if socket exists
-        if not os.path.exists(unix_socket):
-            raise Exception("SAP control Unix socket not found: {0}".format(unix_socket))
-
-        url = "http://localhost/{0}?wsdl".format(service_name)
-
-        try:
-            localsocket = LocalSocketHttpAuthenticated(unix_socket)
-            client = Client(url, transport=localsocket)
-        except Exception as e:
-            raise Exception("Failed to connect via Unix socket: {0}".format(str(e)))
-    else:
-        # Use HTTP connection (original behavior)
-        url = 'http://{0}:{1}/{2}?wsdl'.format(hostname, port, service_name)
-        client = Client(url, username=username, password=password)
-
-    return client
-
-
-def call_sap_control(hostname, port, username, password, function, parameters, sysnr=None, use_local=False):
-    con = connection("sapcontrol", hostname, port, username, password, sysnr=sysnr, use_local=use_local)
-    return call_function(con, function, parameters)
-
-
-def call_sap_hostctrl(hostname, port, username, password, function, parameters, use_local=False):
-    con = connection("SAPHostControl/", hostname, port, username, password, sysnr=None, use_local=use_local)
-    return call_function(con, function, parameters)
->>>>>>> 5104651 (Rework module utils (#6))
 
 
 def call_function(client, function, parameters=None):
