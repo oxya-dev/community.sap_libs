@@ -318,7 +318,7 @@ def main():
     post_startup_delay = params['post_startup_delay']
 
     # Use local Unix socket when: hostname=localhost, no credentials, no explicit port
-    use_local = (
+    is_socket = (
         hostname == 'localhost'
         and username is None
         and password is None
@@ -326,13 +326,13 @@ def main():
     )
 
     # Resolve default HTTP port from sysnr when not using local socket
-    if port is None and not use_local:
+    if port is None and not is_socket:
         port = "5{0}13".format(str(sysnr).zfill(2))
 
    
     try:
         client = connection("sapcontrol", hostname, port, username, password,
-                            sysnr=sysnr, use_local=use_local)
+                            sysnr=sysnr, is_socket=is_socket)
         instances = get_instance_list(client)
     except Exception as e:
         module.fail_json(msg="Failed to get instance list: {0}".format(str(e)))
