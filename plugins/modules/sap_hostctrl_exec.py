@@ -266,11 +266,8 @@ from ..module_utils.sapstartsrv_client import (
     SUDS_LIBRARY_IMPORT_ERROR,
     recursive_dict,
     call_sap_hostctrl as connection,
-<<<<<<< HEAD
     is_read_only_function,
     requires_force,
-=======
->>>>>>> 5104651 (Rework module utils (#6))
 )
 
 
@@ -327,31 +324,20 @@ def main():
 
     if port is None:
         try:
-<<<<<<< HEAD
             if is_socket:
                 result['connection_type'] = 'socket'
                 result['connection_url'] = "http://localhost/SAPHostControl/?wsdl"
 
                 result_conn = connection(hostname, None, username, password, function, parameters, is_socket=True)
-=======
-            if use_local:
-                # Try local connection first
-                result_conn = connection(hostname, None, username, password, function, parameters, use_local=True)
->>>>>>> 5104651 (Rework module utils (#6))
             else:
                 result['connection_type'] = 'soap'
 
                 # Try HTTPS and HTTP ports
                 try:
-<<<<<<< HEAD
                     result['connection_url'] = 'http://{0}:1129/SAPHostControl/?wsdl'.format(hostname)
                     result_conn = connection(hostname, "1129", username, password, function, parameters)
                 except Exception:
                     result['connection_url'] = 'http://{0}:1128/SAPHostControl/?wsdl'.format(hostname)
-=======
-                    result_conn = connection(hostname, "1129", username, password, function, parameters)
-                except Exception:
->>>>>>> 5104651 (Rework module utils (#6))
                     result_conn = connection(hostname, "1128", username, password, function, parameters)
         except Exception as err:
             result['error'] = str(err)
@@ -359,11 +345,7 @@ def main():
         result['connection_type'] = 'soap'
         result['connection_url'] = 'http://{0}:{1}/SAPHostControl/?wsdl'.format(hostname, port)
         try:
-<<<<<<< HEAD
             result_conn = connection(hostname, port, username, password, function, parameters, is_socket=False)
-=======
-            result_conn = connection(hostname, port, username, password, function, parameters, use_local=False)
->>>>>>> 5104651 (Rework module utils (#6))
         except Exception as err:
             result['error'] = str(err)
 
@@ -371,15 +353,8 @@ def main():
         result['msg'] = 'Function execution has failed. See error for more details.'
         module.fail_json(**result)
 
-<<<<<<< HEAD
     conn_result = result_conn
     returned_data = recursive_dict(conn_result) if conn_result is not None else conn_result
-=======
-    if result_conn is not None:
-        returned_data = recursive_dict(result_conn)
-    else:
-        returned_data = result_conn
->>>>>>> 5104651 (Rework module utils (#6))
 
     result['changed'] = not is_read_only_function(function)
     result['msg'] = "Successful execution of function: " + function
