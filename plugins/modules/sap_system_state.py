@@ -331,17 +331,16 @@ def _find_own_instance_entry(instances, sysnr):
 
 def _system_wide_view_is_trustworthy(instances, sysnr, local_state):
     """
-    Decide whether the system-wide GetSystemInstanceList view can currently
-    be trusted to confirm the *whole landscape*'s state.
+    Decide whether the system-wide GetSystemInstanceList view currently
+    agrees with what is independently known for certain about *this*
+    instance (via the local-only GetProcessList).
 
-    GetSystemInstanceList is aggregated via the SAP message server, so it
-    can silently keep serving a stale snapshot once the message server (or
-    the connectivity to it) is gone - without ever raising an exception.
-    Rather than guessing from timing, this cross-checks the aggregated
-    view's entry for *this* instance against what is independently known
-    for certain to be true right now (via the local-only GetProcessList).
-    If the aggregation disagrees about the one instance we can verify for
-    certain, it cannot be trusted for the other instances either.
+    GetSystemInstanceList is aggregated via the SAP message server, so
+    there is normally some propagation lag between a local state change
+    and the aggregation catching up (heartbeat/broadcast interval) - a
+    single disagreement here does not necessarily mean the aggregation is
+    stale, it can heal itself on the next poll. See _StateProbe, which
+    only treats *sustained* disagreement as proof of staleness.
     """
     if not instances:
         return False
@@ -351,17 +350,35 @@ def _system_wide_view_is_trustworthy(instances, sysnr, local_state):
     return own_entry.get('dispstatus', DISPSTATUS_GRAY) == local_state
 
 
+# Number of *consecutive* polls the system-wide view is allowed to
+# disagree with (or omit) this instance's own known-for-certain local
+# state before it is considered genuinely stale/unreachable rather than
+# just lagging behind the normal message server heartbeat/broadcast
+# interval. A single mismatch is expected to happen occasionally during
+# legitimate state transitions (e.g. right as this instance flips from
+# GREEN to YELLOW) and should not, by itself, cause a permanent fallback.
+SYSTEM_WIDE_MISMATCH_TOLERANCE = 3
+
+
 class _StateProbe(object):
     """
     Polls this instance's state, preferring the system-wide
     GetSystemInstanceList view (so readiness reflects the *whole*
     landscape, not just this one instance) as much as possible, and
-    permanently falling back to this instance's own local GetProcessList
-    once the system-wide view is caught disagreeing with what is known
-    for certain locally - a strong signal that its aggregation (the SAP
-    message server) has become stale or unreachable.
+    falling back to this instance's own local GetProcessList once the
+    system-wide view is caught *persistently* disagreeing with what is
+    known for certain locally - a strong signal that its aggregation (the
+    SAP message server) has become stale or unreachable, as opposed to a
+    single transient poll lagging behind the normal heartbeat/broadcast
+    interval (which is expected and self-heals within a poll or two).
 
-    Once the fallback triggers, a single warning is emitted (if a module
+    A disagreement only counts against SYSTEM_WIDE_MISMATCH_TOLERANCE if
+    it happens on *consecutive* polls; any poll where the system-wide view
+    agrees again resets the streak, since that proves the aggregation is
+    still alive and simply caught up.
+
+    Once the fallback triggers (after SYSTEM_WIDE_MISMATCH_TOLERANCE
+    consecutive disagreements), a single warning is emitted (if a module
     reference is provided) and the probe keeps using the local-only view
     for the remainder of the wait, rather than flapping back and forth.
     """
@@ -371,6 +388,7 @@ class _StateProbe(object):
         self.sysnr = sysnr
         self.module = module
         self.trusted = True
+        self.mismatch_streak = 0
 
     def poll(self):
         """Return (state, instances, processes) for this round.
@@ -388,17 +406,33 @@ class _StateProbe(object):
 
         if self.trusted:
             if _system_wide_view_is_trustworthy(instances, self.sysnr, local_state):
+                self.mismatch_streak = 0
                 return compute_overall_state(instances), instances, processes
+
+            self.mismatch_streak += 1
+            if self.mismatch_streak < SYSTEM_WIDE_MISMATCH_TOLERANCE:
+                if instances:
+                    # Own entry disagrees, but the system-wide view still
+                    # returned substantive data: could just be normal
+                    # heartbeat/broadcast propagation lag - keep
+                    # tentatively trusting it while within grace.
+                    return compute_overall_state(instances), instances, processes
+                # No system-wide data at all this round (e.g. the SOAP
+                # call failed): there is nothing to tentatively trust, so
+                # use the local state for this round only, without yet
+                # declaring permanent distrust.
+                return local_state, instances, processes
 
             self.trusted = False
             if self.module is not None:
                 self.module.warn(
                     "System-wide instance list looks stale or unreachable "
-                    "(it disagrees with SAP instance {0}'s own local state); "
-                    "falling back to local-only confirmation for the "
-                    "remainder of this wait. Other instances in the "
-                    "landscape will no longer be independently verified."
-                    .format(self.sysnr)
+                    "(it disagreed with SAP instance {0}'s own local state "
+                    "for {1} consecutive polls); falling back to "
+                    "local-only confirmation for the remainder of this "
+                    "wait. Other instances in the landscape will no "
+                    "longer be independently verified."
+                    .format(self.sysnr, self.mismatch_streak)
                 )
 
         return local_state, instances, processes
@@ -532,10 +566,19 @@ def main():
     try:
         client = connection("sapcontrol", hostname, port, username, password,
                             sysnr=sysnr, is_socket=is_socket)
-        probe = _StateProbe(client, sysnr, module=module)
-        current_state, instances, _processes = probe.poll()
+        processes = get_process_list(client)
     except Exception as e:
         module.fail_json(msg="Failed to get process list: {0}".format(str(e)))
+
+    # Idempotency is decided from local state only: it's a single, one-off
+    # read (unlike the wait loop below, there is no next poll to tell
+    # apart normal message server propagation lag from genuine staleness
+    # in the system-wide view), so what's known for certain about this
+    # instance right now is the only safe signal to act on here. The
+    # system-wide list is still fetched best-effort, purely for the
+    # informational 'instances' field.
+    current_state = compute_local_state(processes)
+    instances = get_instance_list_safe(client, module=module)
 
     result = dict(
         changed=False,

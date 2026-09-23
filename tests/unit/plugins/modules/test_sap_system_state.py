@@ -267,11 +267,14 @@ class TestStateProbe(ModuleTestCase):
         self.assertEqual(returned_instances, instances)
         self.assertTrue(probe.trusted)
 
-    def test_falls_back_to_local_state_and_warns_once_when_untrustworthy(self):
+    def test_falls_back_to_local_state_after_sustained_disagreement_and_warns_once(self):
         """
-        Once the system-wide view is caught disagreeing with what is known
-        for certain locally, the probe must permanently switch to
-        local-only confirmation and warn exactly once (not on every poll).
+        A single disagreement must NOT cause a permanent fallback (it can
+        be normal message server heartbeat/broadcast propagation lag
+        during a legitimate state transition). Only once the system-wide
+        view disagrees for SYSTEM_WIDE_MISMATCH_TOLERANCE *consecutive*
+        polls is it considered genuinely stale, at which point the probe
+        falls back to local-only confirmation and warns exactly once.
         """
         client = MagicMock()
         module = MagicMock()
@@ -280,13 +283,76 @@ class TestStateProbe(ModuleTestCase):
                           return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)]), \
                 patch.object(sap_system_state, 'get_instance_list_safe', return_value=stale_instances):
             probe = sap_system_state._StateProbe(client, "00", module=module)
-            state, _instances, _processes = probe.poll()
-            state2, _instances2, _processes2 = probe.poll()
 
-        self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
-        self.assertEqual(state2, sap_system_state.DISPSTATUS_GRAY)
+            # Still within the grace window: system-wide view is trusted,
+            # so the (unchanged, still GREEN) overall state is returned.
+            for _ in range(sap_system_state.SYSTEM_WIDE_MISMATCH_TOLERANCE - 1):
+                state, _instances, _processes = probe.poll()
+                self.assertEqual(state, sap_system_state.DISPSTATUS_GREEN)
+                self.assertTrue(probe.trusted)
+            module.warn.assert_not_called()
+
+            # Grace exhausted: falls back to local-only confirmation.
+            final_state, _instances, _processes = probe.poll()
+
+        self.assertEqual(final_state, sap_system_state.DISPSTATUS_GRAY)
         self.assertFalse(probe.trusted)
         module.warn.assert_called_once()
+
+    def test_transient_single_poll_mismatch_self_heals(self):
+        """
+        A brief, single-poll disagreement (e.g. this instance flips to
+        YELLOW locally a moment before the message server's aggregation
+        catches up) must not trigger any fallback/warning once the
+        system-wide view agrees again on the next poll.
+        """
+        client = MagicMock()
+        module = MagicMock()
+        local_sequence = [
+            [make_item("disp+work", sap_system_state.DISPSTATUS_YELLOW)],  # local ahead
+            [make_item("disp+work", sap_system_state.DISPSTATUS_YELLOW)],  # aggregation caught up
+        ]
+        instances_sequence = [
+            [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)],   # still lagging
+            [make_instance("host1", "00", sap_system_state.DISPSTATUS_YELLOW)],  # caught up
+        ]
+        with patch.object(sap_system_state, 'get_process_list', side_effect=local_sequence), \
+                patch.object(sap_system_state, 'get_instance_list_safe', side_effect=instances_sequence):
+            probe = sap_system_state._StateProbe(client, "00", module=module)
+            state1, _i1, _p1 = probe.poll()
+            state2, _i2, _p2 = probe.poll()
+
+        self.assertEqual(state1, sap_system_state.DISPSTATUS_GREEN)   # still trusted during grace
+        self.assertEqual(state2, sap_system_state.DISPSTATUS_YELLOW)  # agreement resumed
+        self.assertTrue(probe.trusted)
+        self.assertEqual(probe.mismatch_streak, 0)
+        module.warn.assert_not_called()
+
+    def test_mismatch_streak_resets_on_intervening_agreement(self):
+        """
+        The mismatch streak must reset whenever the system-wide view
+        agrees again, so intermittent (non-consecutive) disagreements
+        never accumulate into a fallback.
+        """
+        client = MagicMock()
+        module = MagicMock()
+        local_sequence = [
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],  # mismatch
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],  # mismatch
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],  # agrees -> resets streak
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],  # mismatch (streak=1 again)
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],  # mismatch (streak=2, still < 3)
+        ]
+        stale_instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
+        with patch.object(sap_system_state, 'get_process_list', side_effect=local_sequence), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=stale_instances):
+            probe = sap_system_state._StateProbe(client, "00", module=module)
+            for _ in local_sequence:
+                probe.poll()
+
+        self.assertTrue(probe.trusted)
+        self.assertEqual(probe.mismatch_streak, 2)
+        module.warn.assert_not_called()
 
 
 class TestWaitForGray(ModuleTestCase):
@@ -320,14 +386,16 @@ class TestWaitForGray(ModuleTestCase):
         Regression test for the reported bug: GetSystemInstanceList can stay
         frozen at GREEN (e.g. once the message server is stopped) while the
         local instance has actually reached GRAY. wait_for_gray() must
-        detect the disagreement and fall back to local-only confirmation
+        detect the *sustained* disagreement (SYSTEM_WIDE_MISMATCH_TOLERANCE
+        consecutive polls) and fall back to local-only confirmation
         instead of hanging until timeout.
         """
         client = MagicMock()
         process_sequence = [
             [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],
+        ] + [
             [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],
-        ]
+        ] * sap_system_state.SYSTEM_WIDE_MISMATCH_TOLERANCE
         stale_instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
 
         with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
@@ -481,9 +549,10 @@ class TestMainIdempotency(ModuleTestCase):
     def test_stop_waits_on_local_state_and_succeeds_despite_stale_instance_list(self):
         process_sequence = [
             [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],  # initial state check
-            [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],  # first poll
-            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],   # second poll -> done
-        ]
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],  # wait poll 1 (agrees)
+        ] + [
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],   # wait polls 2..N (mismatch streak)
+        ] * sap_system_state.SYSTEM_WIDE_MISMATCH_TOLERANCE
         stale_instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
 
         with patch.object(sap_system_state, 'connection', return_value=MagicMock()), \
