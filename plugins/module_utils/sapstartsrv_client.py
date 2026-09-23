@@ -39,6 +39,8 @@ except ImportError:
 try:
     from suds.client import Client
     from suds.sudsobject import asdict
+    from suds.transport import TransportError
+    from suds import WebFault
     from suds.transport.http import HttpAuthenticated, HttpTransport
     HAS_SUDS_LIBRARY = True
     SUDS_LIBRARY_IMPORT_ERROR = None
@@ -58,7 +60,13 @@ except ImportError:
     HAS_SUDS_LIBRARY = False
     SUDS_LIBRARY_IMPORT_ERROR = traceback.format_exc()
 
-    # Dummy class when suds is not available (keeps imports stable in tests)
+    # Dummy exceptions/class when suds is not available (keeps imports stable in tests)
+    class WebFault(Exception):
+        """Fallback used when the suds library is not installed."""
+
+    class TransportError(Exception):
+        """Fallback used when the suds library is not installed."""
+
     class LocalSocketHttpAuthenticated(object):
         def __init__(self, socketpath, **kwargs):
             pass

@@ -98,11 +98,43 @@ class TestGetProcessList(ModuleTestCase):
 
 class TestGetInstanceListSafe(ModuleTestCase):
 
-    def test_swallows_exceptions(self):
+    def test_swallows_web_fault(self):
         client = MagicMock()
-        with patch.object(sap_system_state, 'call_function', side_effect=Exception("message server unreachable")):
+        with patch.object(sap_system_state, 'call_function',
+                          side_effect=sap_system_state.WebFault("ASCS unreachable", None)):
             result = sap_system_state.get_instance_list_safe(client)
         self.assertEqual(result, [])
+
+    def test_swallows_transport_error(self):
+        client = MagicMock()
+        with patch.object(sap_system_state, 'call_function',
+                          side_effect=sap_system_state.TransportError("connection refused", 111)):
+            result = sap_system_state.get_instance_list_safe(client)
+        self.assertEqual(result, [])
+
+    def test_swallows_os_error(self):
+        client = MagicMock()
+        with patch.object(sap_system_state, 'call_function', side_effect=OSError("connection refused")):
+            result = sap_system_state.get_instance_list_safe(client)
+        self.assertEqual(result, [])
+
+    def test_warns_via_module_when_provided(self):
+        client = MagicMock()
+        module = MagicMock()
+        with patch.object(sap_system_state, 'call_function', side_effect=OSError("connection refused")):
+            sap_system_state.get_instance_list_safe(client, module=module)
+        module.warn.assert_called_once()
+
+    def test_does_not_swallow_unexpected_exceptions(self):
+        """
+        Only the specific, expected failure modes (SOAP fault, transport
+        error, OS-level connection error) are swallowed. Anything else
+        (e.g. a programming error) must propagate instead of being hidden.
+        """
+        client = MagicMock()
+        with patch.object(sap_system_state, 'call_function', side_effect=ValueError("unexpected bug")):
+            with self.assertRaises(ValueError):
+                sap_system_state.get_instance_list_safe(client)
 
 
 class TestWaitForGray(ModuleTestCase):

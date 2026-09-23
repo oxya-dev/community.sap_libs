@@ -162,6 +162,8 @@ from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ..module_utils.sapstartsrv_client import (
     HAS_SUDS_LIBRARY,
     SUDS_LIBRARY_IMPORT_ERROR,
+    TransportError,
+    WebFault,
     call_function,
     connection,
     recursive_dict,
@@ -207,16 +209,23 @@ def get_instance_list(client):
     return data.get("item", [])
 
 
-def get_instance_list_safe(client):
-    """Best-effort GetSystemInstanceList, never raises.
+def get_instance_list_safe(client, module=None):
+    """Best-effort GetSystemInstanceList, for informational reporting only.
 
-    Used purely to populate the informational 'instances' field in the
-    module result. Must never block or fail the module: it can become
-    stale or unreachable once the message server is stopped.
+    Only swallows the failure modes we actually expect to see once the
+    message server / another instance becomes unreachable (a SOAP fault
+    from sapstartsrv, an HTTP/transport-level failure, or an OS-level
+    connection error). Anything else (e.g. a programming error in
+    recursive_dict()) is left to propagate so it isn't silently hidden.
     """
     try:
         return get_instance_list(client)
-    except Exception:
+    except (WebFault, TransportError, OSError) as e:
+        if module is not None:
+            module.warn(
+                "Could not refresh the system-wide instance list (informational "
+                "only, does not affect readiness detection): {0}".format(e)
+            )
         return []
 
 
@@ -267,7 +276,7 @@ def compute_local_state(processes):
     return compute_overall_state(processes)
 
 
-def wait_for_green(client, timeout, poll_interval, post_startup_delay):
+def wait_for_green(client, timeout, poll_interval, post_startup_delay, module=None):
     """
     Wait for this instance's local processes to reach GREEN, then monitor
     stability.
@@ -283,7 +292,7 @@ def wait_for_green(client, timeout, poll_interval, post_startup_delay):
     while time.time() < deadline:
         processes = get_process_list(client)
         state = compute_local_state(processes)
-        instances = get_instance_list_safe(client)
+        instances = get_instance_list_safe(client, module=module)
 
         # Regression detection
         for proc in processes:
@@ -317,14 +326,18 @@ def wait_for_green(client, timeout, poll_interval, post_startup_delay):
         state = compute_local_state(processes)
 
         if state != DISPSTATUS_GREEN:
-            return state, get_instance_list_safe(client), None
+            return state, get_instance_list_safe(client, module=module), None
 
         time.sleep(poll_interval)
 
-    return compute_local_state(get_process_list(client)), get_instance_list_safe(client), None
+    return (
+        compute_local_state(get_process_list(client)),
+        get_instance_list_safe(client, module=module),
+        None,
+    )
 
 
-def wait_for_gray(client, timeout, poll_interval):
+def wait_for_gray(client, timeout, poll_interval, module=None):
     """
     Wait until this instance's local processes all reach GRAY.
 
@@ -338,7 +351,7 @@ def wait_for_gray(client, timeout, poll_interval):
         state = compute_local_state(processes)
 
         if state == DISPSTATUS_GRAY:
-            return state, get_instance_list_safe(client)
+            return state, get_instance_list_safe(client, module=module)
 
         time.sleep(poll_interval)
     return None, []
@@ -398,7 +411,7 @@ def main():
         module.fail_json(msg="Failed to get process list: {0}".format(str(e)))
 
     current_state = compute_local_state(processes)
-    instances = get_instance_list_safe(client)
+    instances = get_instance_list_safe(client, module=module)
 
     result = dict(
         changed=False,
@@ -450,7 +463,7 @@ def main():
     if wait:
         if desired_state == 'started':
             final_state, final_instances, regression = wait_for_green(
-                client, wait_timeout, poll_interval, post_startup_delay
+                client, wait_timeout, poll_interval, post_startup_delay, module=module
             )
             if regression is not None:
                 result['state'] = final_state
@@ -467,7 +480,7 @@ def main():
                 module.fail_json(**result)
         else:
             final_state, final_instances = wait_for_gray(
-                client, wait_timeout, poll_interval
+                client, wait_timeout, poll_interval, module=module
             )
 
         if final_state is None:
