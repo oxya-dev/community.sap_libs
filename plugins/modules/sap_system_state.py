@@ -190,6 +190,40 @@ STATE_RANK = {
 }
 
 
+def _get_soap_items(client, function_name):
+    """Call a read-only sapcontrol function and return its <item> elements
+    as a list of plain dicts, regardless of how many items were returned.
+
+    suds does not wrap single-occurrence repeating elements into a list:
+    when sapstartsrv returns exactly one <item> (which regularly happens
+    for GetProcessList on instances with a single monitored process, e.g.
+    an ERS), the raw SOAP result exposes a single object (sometimes even a
+    bare suds Text/string) instead of a list. Blindly treating that as a
+    list of items later breaks with errors such as:
+        'Text' object has no attribute 'get'
+    This normalizes the result upfront so callers always get a list.
+    """
+    result = call_function(client, function_name)
+    if result is None:
+        return []
+
+    raw_items = getattr(result, 'item', None)
+    if raw_items is None:
+        return []
+    if not isinstance(raw_items, list):
+        raw_items = [raw_items]
+
+    items = []
+    for raw_item in raw_items:
+        if hasattr(raw_item, '__keylist__'):
+            items.append(recursive_dict(raw_item))
+        elif isinstance(raw_item, dict):
+            items.append(raw_item)
+        # else: not a structured item (e.g. a bare Text/str value) -
+        # nothing meaningful to report on, skip it rather than crash.
+    return items
+
+
 def get_instance_list(client):
     """Call GetSystemInstanceList and return all instances of the SAP system.
 
@@ -202,11 +236,7 @@ def get_instance_list(client):
     indefinitely. Readiness/regression decisions must never depend on
     this call — see get_process_list()/compute_local_state() instead.
     """
-    result = call_function(client, "GetSystemInstanceList")
-    if result is None:
-        return []
-    data = recursive_dict(result)
-    return data.get("item", [])
+    return _get_soap_items(client, "GetSystemInstanceList")
 
 
 def get_instance_list_safe(client, module=None):
@@ -238,11 +268,7 @@ def get_process_list(client):
     correct source of truth for waiting on/regression-checking *this*
     instance's own state.
     """
-    result = call_function(client, "GetProcessList")
-    if result is None:
-        return []
-    data = recursive_dict(result)
-    return data.get("item", [])
+    return _get_soap_items(client, "GetProcessList")
 
 
 def compute_overall_state(instances):

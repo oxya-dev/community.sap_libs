@@ -41,6 +41,32 @@ def make_instance(hostname, instance_nr, dispstatus):
     return {"hostname": hostname, "instanceNr": instance_nr, "dispstatus": dispstatus}
 
 
+class FakeSudsComplexItem(object):
+    """Minimal stand-in for a suds complex-type object (exposes __keylist__,
+    like a real <item> element returned by GetProcessList/GetSystemInstanceList).
+    """
+
+    def __init__(self, **fields):
+        self.__keylist__ = list(fields.keys())
+        for key, value in fields.items():
+            setattr(self, key, value)
+
+
+class FakeSudsResult(object):
+    """Minimal stand-in for a suds top-level SOAP response object."""
+
+    def __init__(self, item=None):
+        if item is not None:
+            self.item = item
+
+
+def fake_recursive_dict(suds_object):
+    """Lightweight stand-in for module_utils.recursive_dict(), sufficient
+    for flat FakeSudsComplexItem fixtures used in these tests.
+    """
+    return {key: getattr(suds_object, key) for key in suds_object.__keylist__}
+
+
 class TestComputeLocalState(ModuleTestCase):
 
     def test_empty_processes_is_gray(self):
@@ -77,23 +103,94 @@ class TestComputeLocalState(ModuleTestCase):
         )
 
 
-class TestGetProcessList(ModuleTestCase):
+class TestGetSoapItems(ModuleTestCase):
+    """
+    Regression tests for the reported bug: 'Text' object has no attribute
+    'get'. suds does not wrap single-occurrence repeating elements into a
+    list, so when sapstartsrv returns exactly one <item> (which regularly
+    happens for GetProcessList on instances with a single monitored
+    process, e.g. an ERS), the raw SOAP result exposes a single object (or
+    even a bare Text/string) instead of a list. _get_soap_items() must
+    normalize this so callers always get a list of dicts.
+    """
 
-    def test_returns_items(self):
+    def test_multiple_items_returns_list_of_dicts(self):
         client = MagicMock()
-        with patch.object(sap_system_state, 'call_function') as mock_call, \
-                patch.object(sap_system_state, 'recursive_dict') as mock_recursive:
-            mock_call.return_value = MagicMock()
-            mock_recursive.return_value = {"item": [make_item("msg_server", "SAPControl-GREEN")]}
+        raw_result = FakeSudsResult(item=[
+            FakeSudsComplexItem(name="msg_server", dispstatus="SAPControl-GREEN"),
+            FakeSudsComplexItem(name="enserver", dispstatus="SAPControl-GREEN"),
+        ])
+        with patch.object(sap_system_state, 'call_function', return_value=raw_result), \
+                patch.object(sap_system_state, 'recursive_dict', side_effect=fake_recursive_dict):
             result = sap_system_state.get_process_list(client)
-        mock_call.assert_called_once_with(client, "GetProcessList")
-        self.assertEqual(result, [make_item("msg_server", "SAPControl-GREEN")])
+        self.assertEqual(result, [
+            make_item("msg_server", "SAPControl-GREEN"),
+            make_item("enserver", "SAPControl-GREEN"),
+        ])
 
-    def test_returns_empty_on_none(self):
+    def test_single_item_not_wrapped_by_suds_still_returns_a_list(self):
+        client = MagicMock()
+        # suds returns a single object here, NOT a one-element list.
+        raw_result = FakeSudsResult(item=FakeSudsComplexItem(
+            name="enrepserver", dispstatus="SAPControl-GRAY"
+        ))
+        with patch.object(sap_system_state, 'call_function', return_value=raw_result), \
+                patch.object(sap_system_state, 'recursive_dict', side_effect=fake_recursive_dict):
+            result = sap_system_state.get_process_list(client)
+        self.assertEqual(result, [make_item("enrepserver", "SAPControl-GRAY")])
+
+    def test_bare_text_item_is_skipped_instead_of_crashing(self):
+        client = MagicMock()
+        # Simulates a bare suds Text/str value instead of a structured item.
+        raw_result = FakeSudsResult(item="OK")
+        with patch.object(sap_system_state, 'call_function', return_value=raw_result):
+            result = sap_system_state.get_process_list(client)
+        self.assertEqual(result, [])
+
+    def test_no_item_attribute_returns_empty_list(self):
+        client = MagicMock()
+        raw_result = FakeSudsResult()  # no 'item' attribute at all
+        with patch.object(sap_system_state, 'call_function', return_value=raw_result):
+            result = sap_system_state.get_process_list(client)
+        self.assertEqual(result, [])
+
+    def test_none_result_returns_empty_list(self):
         client = MagicMock()
         with patch.object(sap_system_state, 'call_function', return_value=None):
             result = sap_system_state.get_process_list(client)
         self.assertEqual(result, [])
+
+    def test_get_instance_list_uses_get_system_instance_list_function(self):
+        client = MagicMock()
+        with patch.object(sap_system_state, 'call_function', return_value=FakeSudsResult()) as mock_call:
+            sap_system_state.get_instance_list(client)
+        mock_call.assert_called_once_with(client, "GetSystemInstanceList")
+
+    def test_get_process_list_uses_get_process_list_function(self):
+        client = MagicMock()
+        with patch.object(sap_system_state, 'call_function', return_value=FakeSudsResult()) as mock_call:
+            sap_system_state.get_process_list(client)
+        mock_call.assert_called_once_with(client, "GetProcessList")
+
+
+class TestWaitForGraySingleProcessRegression(ModuleTestCase):
+
+    def test_wait_for_gray_handles_single_process_not_wrapped_in_list(self):
+        """
+        End-to-end regression test for the reported bug: an instance with
+        only one monitored process (e.g. an ERS running only
+        enrepserver) must not crash wait_for_gray() when suds returns
+        that single <item> unwrapped.
+        """
+        client = MagicMock()
+        raw_result = FakeSudsResult(item=FakeSudsComplexItem(
+            name="enrepserver", dispstatus="SAPControl-GRAY"
+        ))
+        with patch.object(sap_system_state, 'call_function', return_value=raw_result), \
+                patch.object(sap_system_state, 'recursive_dict', side_effect=fake_recursive_dict), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]):
+            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0)
+        self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
 
 
 class TestGetInstanceListSafe(ModuleTestCase):

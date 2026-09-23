@@ -1,0 +1,8 @@
+bugfixes:
+  - sap_system_state - fix a crash (``'Text' object has no attribute 'get'``)
+    when ``GetProcessList``/``GetSystemInstanceList`` returned exactly one
+    ``<item>`` element. suds does not wrap single-occurrence repeating
+    elements into a list, so the result was previously collapsed into a
+    single object instead of a one-element list, breaking any instance
+    with a single monitored local process (for example an ERS running
+    only ``enrepserver``).
