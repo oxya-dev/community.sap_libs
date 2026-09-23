@@ -1,0 +1,23 @@
+bugfixes:
+  - sap_control_exec, sap_hostctrl_exec - preserve the original traceback (``exception``
+    field) instead of discarding it when a SOAP connection attempt fails, making
+    failures easier to diagnose (https://github.com/oxya-dev/community.sap_libs/pull/8).
+  - sap_company, sap_snote, sap_task_list_execute, sap_user - preserve the original
+    traceback (``exception`` field) when the ``pyrfc`` connection fails instead of
+    discarding it (https://github.com/oxya-dev/community.sap_libs/pull/8).
+  - sap_pyrfc - fix a latent crash where the generic error handler passed the raw
+    exception object (instead of its string representation) to ``fail_json``,
+    which is not JSON-serializable and would itself raise an unhandled
+    ``TypeError`` on any error not covered by the more specific ``pyrfc``
+    exception handlers (https://github.com/oxya-dev/community.sap_libs/pull/8).
+  - sap_hdbsql, sapcar_extract - narrow the ``except Exception`` around
+    ``get_bin_path()`` to ``except ValueError``, the only exception this call can
+    raise, so unrelated bugs are no longer masked as "binary not found"
+    (https://github.com/oxya-dev/community.sap_libs/pull/8).
+  - sap_hdbsql - narrow the ``except Exception`` around CSV parsing to
+    ``(csv.Error, AttributeError)`` so unrelated bugs are no longer reported as
+    "failed to parse CSV output" (https://github.com/oxya-dev/community.sap_libs/pull/8).
+  - module_utils/sapstartsrv_client - remove a no-op exception handler that only
+    re-raised the same error unchanged, adding noise without changing behavior,
+    and raise ``ConnectionError`` instead of a bare ``Exception`` when
+    the local SAP control Unix socket is missing (https://github.com/oxya-dev/community.sap_libs/pull/8).

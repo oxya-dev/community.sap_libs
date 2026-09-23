@@ -254,7 +254,7 @@ def main():
     else:
         try:
             command = [module.get_bin_path('SAPCAR', required=True)]
-        except Exception as e:
+        except ValueError as e:
             module.fail_json(msg='Failed to find SAPCAR at the expected path or URL "{0}". Please check whether it is available: {1}'
                              .format(bin_path, to_native(e)))
 

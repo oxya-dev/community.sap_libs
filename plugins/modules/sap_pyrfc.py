@@ -115,6 +115,7 @@ result:
 
 import traceback
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
+from ansible.module_utils.common.text.converters import to_native
 from ..module_utils.pyrfc_handler import get_connection
 
 try:
@@ -179,8 +180,8 @@ def main():
         msg = "ABAP error occurred"
         error_msg = err.message
     except Exception as err:
-        msg = "Something went wrong."
-        error_msg = err
+        msg = "Something went wrong: {0}".format(to_native(err))
+        error_msg = traceback.format_exc()
     else:
         module.exit_json(changed=True, result=result)
 

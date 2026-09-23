@@ -451,6 +451,7 @@ def run_module():
         conn = Connection(user=conn_username, passwd=conn_password, ashost=host, sysnr=sysnr, client=client)
     except Exception as err:
         result['error'] = str(err)
+        result['exception'] = traceback.format_exc()
         result['msg'] = 'Something went wrong connecting to the SAP system.'
         module.fail_json(**result)
 

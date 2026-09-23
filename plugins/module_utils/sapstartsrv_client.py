@@ -164,21 +164,18 @@ def connection(service_name, hostname, port, username, password, sysnr=None, is_
         # Use HTTP connection (original behavior)
         connection_url = 'http://{0}:{1}/{2}?wsdl'.format(hostname, port, service_name)
 
-    # Attempt to connect using the appropriate method
-    try:
-        if is_socket:
-            if not os.path.exists(unix_socket):
-                raise Exception("SAP control Unix socket not found: {0}".format(unix_socket))
+    # Attempt to connect using the appropriate method. Let SAP_CONNECTION_ERRORS
+    # propagate to the caller unmodified; anything else is an unexpected bug.
+    if is_socket:
+        if not os.path.exists(unix_socket):
+            raise ConnectionError("SAP control Unix socket not found: {0}".format(unix_socket))
 
-            localsocket = LocalSocketHttpAuthenticated(unix_socket)
-            client = Client(connection_url, transport=localsocket)
-        else:
-            client = Client(connection_url, username=username, password=password, timeout=10)
+        localsocket = LocalSocketHttpAuthenticated(unix_socket)
+        client = Client(connection_url, transport=localsocket)
+    else:
+        client = Client(connection_url, username=username, password=password, timeout=10)
 
-        return client
-
-    except Exception as e:
-        raise e
+    return client
 
 
 def call_sap_control(hostname, port, username, password, function, parameters, sysnr=None, is_socket=False):

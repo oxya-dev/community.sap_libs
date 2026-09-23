@@ -290,6 +290,7 @@ def run_module():
         conn = Connection(user=username, passwd=password, ashost=host, sysnr=sysnr, client=client)
     except Exception as err:
         result['error'] = str(err)
+        result['exception'] = traceback.format_exc()
         result['msg'] = 'Something went wrong connecting to the SAP system.'
         module.fail_json(**result)
 
@@ -298,6 +299,7 @@ def run_module():
                                      {'I_SCENARIO_ID': task_to_execute})
     except Exception as err:
         result['error'] = str(err)
+        result['exception'] = traceback.format_exc()
         result['msg'] = 'The task list does not exist.'
         module.fail_json(**result)
     exec_settings = process_exec_settings(task_settings)
@@ -332,6 +334,7 @@ def run_module():
                                          'IS_EXEC_SETTINGS': exec_settings})
     except Exception as err:
         result['error'] = str(err)
+        result['exception'] = traceback.format_exc()
         result['msg'] = 'Something went wrong. See error.'
         module.fail_json(**result)
     # get task logs because the execution may successfully but the tasks shows errors or warnings
