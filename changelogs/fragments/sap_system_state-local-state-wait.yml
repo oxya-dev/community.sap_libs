@@ -1,0 +1,9 @@
+bugfixes:
+  - sap_system_state - wait for the target state (``started``/``stopped``) and detect
+    regressions using the connected instance's own local process list
+    (``GetProcessList``) instead of the system-wide instance list
+    (``GetSystemInstanceList``). The latter is aggregated via the SAP message
+    server, so it could stop being refreshed (and stay stuck reporting a stale
+    state) once the message server / ASCS instance itself was stopped as part of
+    a system-wide ``StopSystem`` call, causing the module to time out even
+    though the target instance had actually reached the desired state.

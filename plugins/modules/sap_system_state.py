@@ -137,11 +137,20 @@ msg:
   type: str
   returned: always
 state:
-  description: Final state of the instance (GREEN, YELLOW, GRAY, RED)
+  description:
+    - Final state of the local instance identified by C(sysnr) (GREEN, YELLOW, GRAY, RED).
+    - Derived from the locally managed processes (C(GetProcessList)), not from the
+      system-wide instance list, so it stays accurate even if other instances
+      (e.g. the message server) are stopped at the same time.
   type: str
   returned: always
 instances:
-  description: List of all SAP system instances and their statuses.
+  description:
+    - Best-effort list of all SAP system instances and their statuses, as reported by
+      C(GetSystemInstanceList).
+    - This is informational only. It depends on the SAP message server being reachable
+      and can be stale or empty (e.g. right after the message server itself is
+      stopped); it is never used to determine whether the target state was reached.
   type: list
   elements: dict
   returned: always
@@ -180,8 +189,47 @@ STATE_RANK = {
 
 
 def get_instance_list(client):
-    """Call GetSystemInstanceList and return all instances of the SAP system."""
+    """Call GetSystemInstanceList and return all instances of the SAP system.
+
+    NOTE: this is a *system-wide* view, aggregated by the connected
+    sapstartsrv via the SAP message server. It is only used for
+    best-effort, informational reporting: once the message server /
+    ASCS instance itself is stopped (which happens as a side effect of
+    a system-wide StopSystem call), other instances can no longer
+    refresh this aggregated view and may keep serving a stale snapshot
+    indefinitely. Readiness/regression decisions must never depend on
+    this call — see get_process_list()/compute_local_state() instead.
+    """
     result = call_function(client, "GetSystemInstanceList")
+    if result is None:
+        return []
+    data = recursive_dict(result)
+    return data.get("item", [])
+
+
+def get_instance_list_safe(client):
+    """Best-effort GetSystemInstanceList, never raises.
+
+    Used purely to populate the informational 'instances' field in the
+    module result. Must never block or fail the module: it can become
+    stale or unreachable once the message server is stopped.
+    """
+    try:
+        return get_instance_list(client)
+    except Exception:
+        return []
+
+
+def get_process_list(client):
+    """Call GetProcessList and return the local processes of this instance.
+
+    Unlike GetSystemInstanceList, this call only reports on the
+    processes managed locally by the connected sapstartsrv and does not
+    depend on the SAP message server being reachable. This makes it the
+    correct source of truth for waiting on/regression-checking *this*
+    instance's own state.
+    """
+    result = call_function(client, "GetProcessList")
     if result is None:
         return []
     data = recursive_dict(result)
@@ -208,77 +256,90 @@ def compute_overall_state(instances):
     return DISPSTATUS_YELLOW
 
 
+def compute_local_state(processes):
+    """
+    Derive this instance's own state from GetProcessList output.
+
+    Same ranking rules as compute_overall_state(), but applied to the
+    locally managed processes only, so it stays accurate regardless of
+    the reachability of the SAP message server / other instances.
+    """
+    return compute_overall_state(processes)
+
+
 def wait_for_green(client, timeout, poll_interval, post_startup_delay):
     """
-    Wait for all instances to reach GREEN, then monitor stability.
-    """
-    previous_statuses = {}  # (hostname, instanceNr) -> most recent dispstatus seen
+    Wait for this instance's local processes to reach GREEN, then monitor
+    stability.
 
-    # wait until all instances are GREEN
+    Readiness/regression is decided from GetProcessList (local, does not
+    depend on the message server). GetSystemInstanceList is only fetched
+    best-effort for informational reporting.
+    """
+    previous_statuses = {}  # process name -> most recent dispstatus seen
+
+    # wait until all local processes are GREEN
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            instances = get_instance_list(client)
-            state = compute_overall_state(instances)
+        processes = get_process_list(client)
+        state = compute_local_state(processes)
+        instances = get_instance_list_safe(client)
 
-            # Regression detection
-            for inst in instances:
-                instance_key = (inst.get('hostname'), inst.get('instanceNr'))
-                current_status = inst.get('dispstatus', DISPSTATUS_GRAY)
-                previous_status = previous_statuses.get(instance_key, DISPSTATUS_GRAY)
-                if STATE_RANK.get(current_status, 0) > STATE_RANK.get(previous_status, 0):
-                    previous_statuses[instance_key] = current_status
-                elif STATE_RANK.get(current_status, 0) < STATE_RANK.get(previous_status, 0):
-                    return state, instances, {
-                        'instance': inst,
-                        'from_state': previous_status,
-                        'to_state': current_status,
-                    }
+        # Regression detection
+        for proc in processes:
+            process_key = proc.get('name')
+            current_status = proc.get('dispstatus', DISPSTATUS_GRAY)
+            previous_status = previous_statuses.get(process_key, DISPSTATUS_GRAY)
+            if STATE_RANK.get(current_status, 0) > STATE_RANK.get(previous_status, 0):
+                previous_statuses[process_key] = current_status
+            elif STATE_RANK.get(current_status, 0) < STATE_RANK.get(previous_status, 0):
+                return state, instances, {
+                    'instance': proc,
+                    'from_state': previous_status,
+                    'to_state': current_status,
+                }
 
-            if state == DISPSTATUS_RED:
-                return state, instances, None
+        if state == DISPSTATUS_RED:
+            return state, instances, None
 
-            if state == DISPSTATUS_GREEN:
-                break   # All instances GREEN — enter stability window
+        if state == DISPSTATUS_GREEN:
+            break   # All local processes GREEN — enter stability window
 
-        except Exception:
-            raise
         time.sleep(poll_interval)
     else:
-        # Timeout reached without all instances turning GREEN
+        # Timeout reached without all local processes turning GREEN
         return None, [], None
 
     # stability window — confirm GREEN holds for post_startup_delay seconds
     stability_deadline = time.time() + post_startup_delay
     while time.time() < stability_deadline:
-        instances = get_instance_list(client)
-        state = compute_overall_state(instances)
+        processes = get_process_list(client)
+        state = compute_local_state(processes)
 
         if state != DISPSTATUS_GREEN:
-            return state, instances, None
+            return state, get_instance_list_safe(client), None
 
         time.sleep(poll_interval)
 
-    instances = get_instance_list(client)
-    state = compute_overall_state(instances)
-    return state, instances, None
+    return compute_local_state(get_process_list(client)), get_instance_list_safe(client), None
 
 
 def wait_for_gray(client, timeout, poll_interval):
     """
-    Wait until all instances reach GRAY.
+    Wait until this instance's local processes all reach GRAY.
+
+    Readiness is decided from GetProcessList (local, does not depend on
+    the message server). GetSystemInstanceList is only fetched
+    best-effort for informational reporting.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            instances = get_instance_list(client)
-            state = compute_overall_state(instances)
+        processes = get_process_list(client)
+        state = compute_local_state(processes)
 
-            if state == DISPSTATUS_GRAY:
-                return state, instances
+        if state == DISPSTATUS_GRAY:
+            return state, get_instance_list_safe(client)
 
-        except Exception:
-            raise
         time.sleep(poll_interval)
     return None, []
 
@@ -329,15 +390,15 @@ def main():
     if port is None and not is_socket:
         port = "5{0}13".format(str(sysnr).zfill(2))
 
-   
     try:
         client = connection("sapcontrol", hostname, port, username, password,
                             sysnr=sysnr, is_socket=is_socket)
-        instances = get_instance_list(client)
+        processes = get_process_list(client)
     except Exception as e:
-        module.fail_json(msg="Failed to get instance list: {0}".format(str(e)))
+        module.fail_json(msg="Failed to get process list: {0}".format(str(e)))
 
-    current_state = compute_overall_state(instances)
+    current_state = compute_local_state(processes)
+    instances = get_instance_list_safe(client)
 
     result = dict(
         changed=False,
@@ -395,10 +456,10 @@ def main():
                 result['state'] = final_state
                 result['instances'] = final_instances
                 result['msg'] = (
-                    "Regression detected on {0} instance {1}: {2} -> {3}."
+                    "Regression detected on SAP instance {0} process {1}: {2} -> {3}."
                     .format(
-                        regression['instance'].get('hostname'),
-                        regression['instance'].get('instanceNr'),
+                        sysnr,
+                        regression['instance'].get('name'),
                         regression['from_state'],
                         regression['to_state'],
                     )
