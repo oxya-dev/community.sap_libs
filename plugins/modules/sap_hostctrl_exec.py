@@ -259,6 +259,8 @@ out:
             }]
 '''
 
+import traceback
+
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 
 from ..module_utils.sapstartsrv_client import (
@@ -341,6 +343,7 @@ def main():
                     result_conn = connection(hostname, "1128", username, password, function, parameters)
         except Exception as err:
             result['error'] = str(err)
+            result['exception'] = traceback.format_exc()
     else:
         result['connection_type'] = 'soap'
         result['connection_url'] = 'http://{0}:{1}/SAPHostControl/?wsdl'.format(hostname, port)
@@ -348,6 +351,7 @@ def main():
             result_conn = connection(hostname, port, username, password, function, parameters, is_socket=False)
         except Exception as err:
             result['error'] = str(err)
+            result['exception'] = traceback.format_exc()
 
     if result['error'] != '':
         result['msg'] = 'Function execution has failed. See error for more details.'

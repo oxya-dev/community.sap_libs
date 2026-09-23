@@ -265,7 +265,7 @@ def main():
 
     try:
         command = [module.get_bin_path(bin_path, required=True)]
-    except Exception as e:
+    except ValueError as e:
         module.fail_json(msg='Executable binary hdbsql not found at {0}: {1}'.format(bin_path, to_native(e)))
 
     # Build Base Command
@@ -301,7 +301,7 @@ def main():
             out_raw = run_hdb_command(module, query_command)
             try:
                 output.append(csv_to_list(out_raw))
-            except Exception as e:
+            except (csv.Error, AttributeError) as e:
                 module.fail_json(msg="Failed to parse CSV output: {0}".format(to_native(e)))
 
     # Process Files
@@ -312,7 +312,7 @@ def main():
             out_raw = run_hdb_command(module, file_query_command)
             try:
                 output.append(csv_to_list(out_raw))
-            except Exception as e:
+            except (csv.Error, AttributeError) as e:
                 module.fail_json(msg="Failed to parse output from file {0}: {1}".format(p, to_native(e)))
 
     module.exit_json(changed=has_changed, query_result=output)
