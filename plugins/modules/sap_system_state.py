@@ -22,7 +22,13 @@ short_description: Start or stop a full SAP system idempotently via sapcontrol S
 version_added: "1.0.0"
 description:
   - Start or stop all instances of a SAP system idempotently using the sapcontrol SOAP API.
-  - Connects to the sapstartsrv identified by C(sysnr) and issues C(StartSystem) or C(StopSystem).
+  - Connects to the sapstartsrv identified by C(sysnr) and issues C(StartSystem) or C(StopSystem),
+    which acts on the whole SAP system landscape, not just the connected instance.
+  - Waits for the *whole system* to reach the target state by relying on the system-wide
+    C(GetSystemInstanceList) view as long as it can be cross-checked as trustworthy against
+    this instance's own local state; it automatically falls back to confirming only this
+    instance's own local state (C(GetProcessList)) if that system-wide view is found to be
+    stale or unreachable (for example once the message server itself is stopped).
   - Compatible with any SAP system managed by SAPControl, including SAP NetWeaver and SAP HANA.
   - Uses local Unix socket or HTTP depending on the provided parameters.
 options:
@@ -138,19 +144,23 @@ msg:
   returned: always
 state:
   description:
-    - Final state of the local instance identified by C(sysnr) (GREEN, YELLOW, GRAY, RED).
-    - Derived from the locally managed processes (C(GetProcessList)), not from the
-      system-wide instance list, so it stays accurate even if other instances
-      (e.g. the message server) are stopped at the same time.
+    - Final state (GREEN, YELLOW, GRAY, RED).
+    - Reflects the *whole SAP system* (derived from C(GetSystemInstanceList))
+      as long as that system-wide view can be cross-checked as trustworthy
+      against this instance's own local state (C(GetProcessList)).
+    - Falls back to this instance's own local state only if the system-wide
+      view is found to disagree with it (a sign it has become stale or
+      unreachable, e.g. once the message server itself is stopped); a
+      warning is emitted in that case.
   type: str
   returned: always
 instances:
   description:
     - Best-effort list of all SAP system instances and their statuses, as reported by
       C(GetSystemInstanceList).
-    - This is informational only. It depends on the SAP message server being reachable
-      and can be stale or empty (e.g. right after the message server itself is
-      stopped); it is never used to determine whether the target state was reached.
+    - Always provided for informational purposes, even while C(state) has fallen
+      back to local-only confirmation (in which case this list may be stale,
+      incomplete, or empty).
   type: list
   elements: dict
   returned: always
@@ -302,23 +312,116 @@ def compute_local_state(processes):
     return compute_overall_state(processes)
 
 
-def wait_for_green(client, timeout, poll_interval, post_startup_delay, module=None):
+def _find_own_instance_entry(instances, sysnr):
     """
-    Wait for this instance's local processes to reach GREEN, then monitor
-    stability.
+    Find, within a GetSystemInstanceList payload, the entry that
+    corresponds to *this* instance (matched by instance number), so it can
+    be cross-checked against what is independently known to be true
+    locally (via GetProcessList).
+    """
+    own_instance_nr = str(sysnr).zfill(2)
+    for inst in instances:
+        instance_nr = inst.get('instanceNr')
+        if instance_nr is None:
+            continue
+        if str(instance_nr).zfill(2) == own_instance_nr:
+            return inst
+    return None
 
-    Readiness/regression is decided from GetProcessList (local, does not
-    depend on the message server). GetSystemInstanceList is only fetched
-    best-effort for informational reporting.
+
+def _system_wide_view_is_trustworthy(instances, sysnr, local_state):
     """
+    Decide whether the system-wide GetSystemInstanceList view can currently
+    be trusted to confirm the *whole landscape*'s state.
+
+    GetSystemInstanceList is aggregated via the SAP message server, so it
+    can silently keep serving a stale snapshot once the message server (or
+    the connectivity to it) is gone - without ever raising an exception.
+    Rather than guessing from timing, this cross-checks the aggregated
+    view's entry for *this* instance against what is independently known
+    for certain to be true right now (via the local-only GetProcessList).
+    If the aggregation disagrees about the one instance we can verify for
+    certain, it cannot be trusted for the other instances either.
+    """
+    if not instances:
+        return False
+    own_entry = _find_own_instance_entry(instances, sysnr)
+    if own_entry is None:
+        return False
+    return own_entry.get('dispstatus', DISPSTATUS_GRAY) == local_state
+
+
+class _StateProbe(object):
+    """
+    Polls this instance's state, preferring the system-wide
+    GetSystemInstanceList view (so readiness reflects the *whole*
+    landscape, not just this one instance) as much as possible, and
+    permanently falling back to this instance's own local GetProcessList
+    once the system-wide view is caught disagreeing with what is known
+    for certain locally - a strong signal that its aggregation (the SAP
+    message server) has become stale or unreachable.
+
+    Once the fallback triggers, a single warning is emitted (if a module
+    reference is provided) and the probe keeps using the local-only view
+    for the remainder of the wait, rather than flapping back and forth.
+    """
+
+    def __init__(self, client, sysnr, module=None):
+        self.client = client
+        self.sysnr = sysnr
+        self.module = module
+        self.trusted = True
+
+    def poll(self):
+        """Return (state, instances, processes) for this round.
+
+        'state' reflects the whole system when the system-wide view is
+        trusted, or just this instance when it isn't (anymore).
+        'instances' is always the best-effort system-wide list, for
+        informational reporting regardless of trust.
+        'processes' is always this instance's own local process list, for
+        regression detection.
+        """
+        processes = get_process_list(self.client)
+        local_state = compute_local_state(processes)
+        instances = get_instance_list_safe(self.client, module=self.module)
+
+        if self.trusted:
+            if _system_wide_view_is_trustworthy(instances, self.sysnr, local_state):
+                return compute_overall_state(instances), instances, processes
+
+            self.trusted = False
+            if self.module is not None:
+                self.module.warn(
+                    "System-wide instance list looks stale or unreachable "
+                    "(it disagrees with SAP instance {0}'s own local state); "
+                    "falling back to local-only confirmation for the "
+                    "remainder of this wait. Other instances in the "
+                    "landscape will no longer be independently verified."
+                    .format(self.sysnr)
+                )
+
+        return local_state, instances, processes
+
+
+def wait_for_green(client, timeout, poll_interval, post_startup_delay, sysnr, module=None):
+    """
+    Wait for the SAP system to reach GREEN, then monitor stability.
+
+    Prefers the system-wide GetSystemInstanceList view (confirming the
+    *whole* landscape reached GREEN) as long as it can be cross-checked as
+    trustworthy against this instance's own local state; falls back to
+    local-only confirmation otherwise. Regression detection always uses
+    the local process list, which is reliable regardless of the message
+    server's reachability.
+    """
+    probe = _StateProbe(client, sysnr, module=module)
     previous_statuses = {}  # process name -> most recent dispstatus seen
 
-    # wait until all local processes are GREEN
+    # wait until GREEN
     deadline = time.time() + timeout
     while time.time() < deadline:
-        processes = get_process_list(client)
-        state = compute_local_state(processes)
-        instances = get_instance_list_safe(client, module=module)
+        state, instances, processes = probe.poll()
 
         # Regression detection
         for proc in processes:
@@ -338,46 +441,43 @@ def wait_for_green(client, timeout, poll_interval, post_startup_delay, module=No
             return state, instances, None
 
         if state == DISPSTATUS_GREEN:
-            break   # All local processes GREEN — enter stability window
+            break   # GREEN — enter stability window
 
         time.sleep(poll_interval)
     else:
-        # Timeout reached without all local processes turning GREEN
+        # Timeout reached without reaching GREEN
         return None, [], None
 
     # stability window — confirm GREEN holds for post_startup_delay seconds
     stability_deadline = time.time() + post_startup_delay
     while time.time() < stability_deadline:
-        processes = get_process_list(client)
-        state = compute_local_state(processes)
+        state, instances, _processes = probe.poll()
 
         if state != DISPSTATUS_GREEN:
-            return state, get_instance_list_safe(client, module=module), None
+            return state, instances, None
 
         time.sleep(poll_interval)
 
-    return (
-        compute_local_state(get_process_list(client)),
-        get_instance_list_safe(client, module=module),
-        None,
-    )
+    state, instances, _processes = probe.poll()
+    return state, instances, None
 
 
-def wait_for_gray(client, timeout, poll_interval, module=None):
+def wait_for_gray(client, timeout, poll_interval, sysnr, module=None):
     """
-    Wait until this instance's local processes all reach GRAY.
+    Wait until the SAP system reaches GRAY.
 
-    Readiness is decided from GetProcessList (local, does not depend on
-    the message server). GetSystemInstanceList is only fetched
-    best-effort for informational reporting.
+    Prefers the system-wide GetSystemInstanceList view (confirming the
+    *whole* landscape reached GRAY) as long as it can be cross-checked as
+    trustworthy against this instance's own local state; falls back to
+    local-only confirmation otherwise.
     """
+    probe = _StateProbe(client, sysnr, module=module)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        processes = get_process_list(client)
-        state = compute_local_state(processes)
+        state, instances, _processes = probe.poll()
 
         if state == DISPSTATUS_GRAY:
-            return state, get_instance_list_safe(client, module=module)
+            return state, instances
 
         time.sleep(poll_interval)
     return None, []
@@ -432,12 +532,10 @@ def main():
     try:
         client = connection("sapcontrol", hostname, port, username, password,
                             sysnr=sysnr, is_socket=is_socket)
-        processes = get_process_list(client)
+        probe = _StateProbe(client, sysnr, module=module)
+        current_state, instances, _processes = probe.poll()
     except Exception as e:
         module.fail_json(msg="Failed to get process list: {0}".format(str(e)))
-
-    current_state = compute_local_state(processes)
-    instances = get_instance_list_safe(client, module=module)
 
     result = dict(
         changed=False,
@@ -489,7 +587,7 @@ def main():
     if wait:
         if desired_state == 'started':
             final_state, final_instances, regression = wait_for_green(
-                client, wait_timeout, poll_interval, post_startup_delay, module=module
+                client, wait_timeout, poll_interval, post_startup_delay, sysnr, module=module
             )
             if regression is not None:
                 result['state'] = final_state
@@ -506,7 +604,7 @@ def main():
                 module.fail_json(**result)
         else:
             final_state, final_instances = wait_for_gray(
-                client, wait_timeout, poll_interval, module=module
+                client, wait_timeout, poll_interval, sysnr, module=module
             )
 
         if final_state is None:

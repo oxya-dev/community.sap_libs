@@ -189,8 +189,218 @@ class TestWaitForGraySingleProcessRegression(ModuleTestCase):
         with patch.object(sap_system_state, 'call_function', return_value=raw_result), \
                 patch.object(sap_system_state, 'recursive_dict', side_effect=fake_recursive_dict), \
                 patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]):
-            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0)
+            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0, sysnr="00")
         self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
+
+
+class TestFindOwnInstanceEntry(ModuleTestCase):
+
+    def test_matches_by_zero_padded_instance_number(self):
+        instances = [make_instance("host1", 1, sap_system_state.DISPSTATUS_GREEN),
+                     make_instance("host2", "00", sap_system_state.DISPSTATUS_GRAY)]
+        entry = sap_system_state._find_own_instance_entry(instances, "00")
+        self.assertEqual(entry, instances[1])
+
+    def test_matches_regardless_of_int_vs_str_type(self):
+        instances = [make_instance("host1", 0, sap_system_state.DISPSTATUS_GREEN)]
+        entry = sap_system_state._find_own_instance_entry(instances, "00")
+        self.assertEqual(entry, instances[0])
+
+    def test_returns_none_when_not_found(self):
+        instances = [make_instance("host1", 1, sap_system_state.DISPSTATUS_GREEN)]
+        self.assertIsNone(sap_system_state._find_own_instance_entry(instances, "00"))
+
+
+class TestSystemWideViewIsTrustworthy(ModuleTestCase):
+
+    def test_trustworthy_when_own_entry_matches_local_state(self):
+        instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
+        self.assertTrue(
+            sap_system_state._system_wide_view_is_trustworthy(
+                instances, "00", sap_system_state.DISPSTATUS_GREEN
+            )
+        )
+
+    def test_not_trustworthy_when_own_entry_disagrees(self):
+        instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
+        self.assertFalse(
+            sap_system_state._system_wide_view_is_trustworthy(
+                instances, "00", sap_system_state.DISPSTATUS_GRAY
+            )
+        )
+
+    def test_not_trustworthy_when_empty(self):
+        self.assertFalse(
+            sap_system_state._system_wide_view_is_trustworthy([], "00", sap_system_state.DISPSTATUS_GRAY)
+        )
+
+    def test_not_trustworthy_when_own_entry_missing(self):
+        instances = [make_instance("host1", "01", sap_system_state.DISPSTATUS_GREEN)]
+        self.assertFalse(
+            sap_system_state._system_wide_view_is_trustworthy(
+                instances, "00", sap_system_state.DISPSTATUS_GREEN
+            )
+        )
+
+
+class TestStateProbe(ModuleTestCase):
+
+    def test_uses_whole_system_state_when_trustworthy(self):
+        """
+        As long as the system-wide view can be cross-checked as
+        trustworthy, the probe must report the *whole system*'s state
+        (e.g. still YELLOW because another instance hasn't caught up),
+        not just this instance's own (already GREEN) state.
+        """
+        client = MagicMock()
+        instances = [
+            make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN),
+            make_instance("host2", "01", sap_system_state.DISPSTATUS_YELLOW),
+        ]
+        with patch.object(sap_system_state, 'get_process_list',
+                          return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)]), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=instances):
+            probe = sap_system_state._StateProbe(client, "00")
+            state, returned_instances, _processes = probe.poll()
+
+        self.assertEqual(state, sap_system_state.DISPSTATUS_YELLOW)
+        self.assertEqual(returned_instances, instances)
+        self.assertTrue(probe.trusted)
+
+    def test_falls_back_to_local_state_and_warns_once_when_untrustworthy(self):
+        """
+        Once the system-wide view is caught disagreeing with what is known
+        for certain locally, the probe must permanently switch to
+        local-only confirmation and warn exactly once (not on every poll).
+        """
+        client = MagicMock()
+        module = MagicMock()
+        stale_instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
+        with patch.object(sap_system_state, 'get_process_list',
+                          return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)]), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=stale_instances):
+            probe = sap_system_state._StateProbe(client, "00", module=module)
+            state, _instances, _processes = probe.poll()
+            state2, _instances2, _processes2 = probe.poll()
+
+        self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
+        self.assertEqual(state2, sap_system_state.DISPSTATUS_GRAY)
+        self.assertFalse(probe.trusted)
+        module.warn.assert_called_once()
+
+
+class TestWaitForGray(ModuleTestCase):
+
+    def test_confirms_whole_system_when_system_wide_view_is_trustworthy(self):
+        """
+        When the system-wide view can be cross-checked as trustworthy, the
+        wait must confirm the *whole system* reached GRAY - it must keep
+        waiting while another instance in the landscape is still shutting
+        down, even though this instance is already GRAY.
+        """
+        client = MagicMock()
+        process_sequence = [
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],
+        ]
+        instances_sequence = [
+            [make_instance("host1", "00", sap_system_state.DISPSTATUS_GRAY),
+             make_instance("host2", "01", sap_system_state.DISPSTATUS_YELLOW)],
+            [make_instance("host1", "00", sap_system_state.DISPSTATUS_GRAY),
+             make_instance("host2", "01", sap_system_state.DISPSTATUS_GRAY)],
+        ]
+        with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
+                patch.object(sap_system_state, 'get_instance_list_safe', side_effect=instances_sequence):
+            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0, sysnr="00")
+        self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
+        self.assertEqual(instances, instances_sequence[-1])
+
+    def test_falls_back_to_local_state_when_system_wide_view_is_stale(self):
+        """
+        Regression test for the reported bug: GetSystemInstanceList can stay
+        frozen at GREEN (e.g. once the message server is stopped) while the
+        local instance has actually reached GRAY. wait_for_gray() must
+        detect the disagreement and fall back to local-only confirmation
+        instead of hanging until timeout.
+        """
+        client = MagicMock()
+        process_sequence = [
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],
+        ]
+        stale_instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
+
+        with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=stale_instances):
+            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0, sysnr="00")
+
+        self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
+        # informational only, still reflects the (stale) system-wide view
+        self.assertEqual(instances, stale_instances)
+
+    def test_times_out_when_neither_view_reaches_gray(self):
+        client = MagicMock()
+        with patch.object(sap_system_state, 'get_process_list',
+                          return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)]), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]), \
+                patch('time.time', side_effect=[0, 1, 2, 100]):
+            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0, sysnr="00")
+        self.assertIsNone(state)
+        self.assertEqual(instances, [])
+
+
+class TestWaitForGreen(ModuleTestCase):
+
+    def test_regression_detected_from_local_process_list(self):
+        client = MagicMock()
+        process_sequence = [
+            [make_item("disp+work", sap_system_state.DISPSTATUS_YELLOW)],
+            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],  # regression: yellow -> gray
+        ]
+        with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]):
+            state, instances, regression = sap_system_state.wait_for_green(
+                client, timeout=10, poll_interval=0, post_startup_delay=5, sysnr="00"
+            )
+        self.assertIsNotNone(regression)
+        self.assertEqual(regression['instance'].get('name'), 'disp+work')
+        self.assertEqual(regression['from_state'], sap_system_state.DISPSTATUS_YELLOW)
+        self.assertEqual(regression['to_state'], sap_system_state.DISPSTATUS_GRAY)
+
+    def test_completes_after_stability_window(self):
+        client = MagicMock()
+        with patch.object(sap_system_state, 'get_process_list',
+                          return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)]), \
+                patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]), \
+                patch('time.time', side_effect=[0, 0, 1, 100]):
+            state, instances, regression = sap_system_state.wait_for_green(
+                client, timeout=10, poll_interval=0, post_startup_delay=5, sysnr="00"
+            )
+        self.assertIsNone(regression)
+        self.assertEqual(state, sap_system_state.DISPSTATUS_GREEN)
+
+    def test_confirms_whole_system_when_system_wide_view_is_trustworthy(self):
+        """
+        Must keep waiting until the *whole system* reaches GREEN, not just
+        this instance, when the system-wide view is trustworthy.
+        """
+        client = MagicMock()
+        own_green = make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)
+        process_sequence = [[make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)]] * 4
+        instances_sequence = [
+            [own_green, make_instance("host2", "01", sap_system_state.DISPSTATUS_YELLOW)],  # round 1
+            [own_green, make_instance("host2", "01", sap_system_state.DISPSTATUS_GREEN)],   # round 2: whole system green
+            [own_green, make_instance("host2", "01", sap_system_state.DISPSTATUS_GREEN)],   # round 3: stability check
+            [own_green, make_instance("host2", "01", sap_system_state.DISPSTATUS_GREEN)],   # round 4: final poll
+        ]
+        with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
+                patch.object(sap_system_state, 'get_instance_list_safe', side_effect=instances_sequence), \
+                patch('time.time', side_effect=[0, 1, 2, 10, 11, 100]):
+            state, instances, regression = sap_system_state.wait_for_green(
+                client, timeout=10, poll_interval=0, post_startup_delay=5, sysnr="00"
+            )
+        self.assertIsNone(regression)
+        self.assertEqual(state, sap_system_state.DISPSTATUS_GREEN)
 
 
 class TestGetInstanceListSafe(ModuleTestCase):
@@ -232,71 +442,6 @@ class TestGetInstanceListSafe(ModuleTestCase):
         with patch.object(sap_system_state, 'call_function', side_effect=ValueError("unexpected bug")):
             with self.assertRaises(ValueError):
                 sap_system_state.get_instance_list_safe(client)
-
-
-class TestWaitForGray(ModuleTestCase):
-
-    def test_completes_using_local_state_even_if_system_wide_view_is_stale(self):
-        """
-        Regression test for the reported bug: GetSystemInstanceList can stay
-        frozen at GREEN (e.g. once the message server is stopped) while the
-        local instance has actually reached GRAY. wait_for_gray() must rely
-        on GetProcessList (local) and complete regardless.
-        """
-        client = MagicMock()
-        process_sequence = [
-            [make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)],
-            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],
-        ]
-        stale_instances = [make_instance("host1", "00", sap_system_state.DISPSTATUS_GREEN)]
-
-        with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
-                patch.object(sap_system_state, 'get_instance_list_safe', return_value=stale_instances):
-            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0)
-
-        self.assertEqual(state, sap_system_state.DISPSTATUS_GRAY)
-        # informational only, still reflects the (stale) system-wide view
-        self.assertEqual(instances, stale_instances)
-
-    def test_times_out_when_local_state_never_reaches_gray(self):
-        client = MagicMock()
-        with patch.object(sap_system_state, 'get_process_list',
-                          return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)]), \
-                patch('time.time', side_effect=[0, 1, 2, 100]):
-            state, instances = sap_system_state.wait_for_gray(client, timeout=10, poll_interval=0)
-        self.assertIsNone(state)
-        self.assertEqual(instances, [])
-
-
-class TestWaitForGreen(ModuleTestCase):
-
-    def test_regression_detected_from_local_process_list(self):
-        client = MagicMock()
-        process_sequence = [
-            [make_item("disp+work", sap_system_state.DISPSTATUS_YELLOW)],
-            [make_item("disp+work", sap_system_state.DISPSTATUS_GRAY)],  # regression: yellow -> gray
-        ]
-        with patch.object(sap_system_state, 'get_process_list', side_effect=process_sequence), \
-                patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]):
-            state, instances, regression = sap_system_state.wait_for_green(
-                client, timeout=10, poll_interval=0, post_startup_delay=5
-            )
-        self.assertIsNotNone(regression)
-        self.assertEqual(regression['instance'].get('name'), 'disp+work')
-        self.assertEqual(regression['from_state'], sap_system_state.DISPSTATUS_YELLOW)
-        self.assertEqual(regression['to_state'], sap_system_state.DISPSTATUS_GRAY)
-
-    def test_completes_after_stability_window(self):
-        client = MagicMock()
-        with patch.object(sap_system_state, 'get_process_list',
-                          return_value=[make_item("disp+work", sap_system_state.DISPSTATUS_GREEN)]), \
-                patch.object(sap_system_state, 'get_instance_list_safe', return_value=[]), \
-                patch('time.time', side_effect=[0, 0, 1, 100]):
-            state, instances, regression = sap_system_state.wait_for_green(
-                client, timeout=10, poll_interval=0, post_startup_delay=5
-            )
-        self.assertIsNone(regression)
-        self.assertEqual(state, sap_system_state.DISPSTATUS_GREEN)
 
 
 class TestMainIdempotency(ModuleTestCase):

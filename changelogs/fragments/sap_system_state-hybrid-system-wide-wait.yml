@@ -1,0 +1,14 @@
+minor_changes:
+  - sap_system_state - the module now waits for the *whole SAP system*
+    (via the system-wide C(GetSystemInstanceList) view) to reach the
+    target state whenever that view can be cross-checked as trustworthy
+    against this instance's own local state (C(GetProcessList)).
+    C(StartSystem)/C(StopSystem) already acted on the whole landscape;
+    now the confirmation matches that scope again, restoring the original
+    "confirm everything went down/up" guarantee without reintroducing the
+    hang caused by a stale system-wide view (see previous bugfix).
+    If the system-wide view is ever found to disagree with this
+    instance's own known state (a sign the aggregation, e.g. the message
+    server, has become stale or unreachable), the module emits a warning
+    and permanently falls back to confirming only this instance's own
+    local state for the remainder of the wait.
